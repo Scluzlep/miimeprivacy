@@ -84,16 +84,22 @@ jobs:
               }
               assert expected_scopes.issubset(scopes), f"scope.list missing targets: {expected_scopes - scopes}"
 
-              dexkit_entries = [info for info in zf.infolist() if info.filename.endswith("/libdexkit.so")]
-              assert dexkit_entries, "libdexkit.so missing from APK"
-              for info in dexkit_entries:
-                  assert info.compress_type == 0, f"{info.filename} must be stored uncompressed (compress_type=0, got {info.compress_type})"
-          print("Verified debug APK libxposed API 102 structure and uncompressed libdexkit.so")
+              dexkit_entries = {info.filename: info for info in zf.infolist() if info.filename.endswith("/libdexkit.so")}
+              for abi in ("arm64-v8a", "armeabi-v7a"):
+                  so_path = f"lib/{abi}/libdexkit.so"
+                  assert so_path in dexkit_entries, f"{so_path} missing from APK"
+              for filename, info in dexkit_entries.items():
+                  assert info.file_size > 0, f"{filename} must be non-empty (got file_size={info.file_size})"
+          print("Verified debug APK libxposed API 102 structure and extractable libdexkit.so")
           PY
           BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           MANIFEST_TREE="$("$BUILD_TOOLS/aapt2" dump xmltree "$DEBUG_APK" --file AndroidManifest.xml)"
+          echo "$MANIFEST_TREE" | grep -Eq "android:extractNativeLibs.*=true"
           echo "$MANIFEST_TREE" | grep -q "android.intent.category.LAUNCHER"
+          echo "$MANIFEST_TREE" | grep -q "com.scluzlep.miimeprivacy.ACTION_OPEN_SETTINGS"
           echo "$MANIFEST_TREE" | grep -q "io.github.libxposed.service.XposedProvider"
+          echo "$MANIFEST_TREE" | grep -q "com.scluzlep.miimeprivacy.bridge.PrivacySyncProvider"
+          echo "$MANIFEST_TREE" | grep -q "com.scluzlep.miimeprivacy.bridge.PrivacySyncReceiver"
           echo "$MANIFEST_TREE" | grep -q "com.scluzlep.miimeprivacy.tile.CloudToggleTileService"
           if echo "$MANIFEST_TREE" | grep -q "xposedminversion"; then
             echo "::error::Legacy xposedminversion metadata present"
@@ -257,8 +263,12 @@ jobs:
           fi
 
           MANIFEST_TREE="$("$BUILD_TOOLS/aapt2" dump xmltree "$OUT_APK" --file AndroidManifest.xml)"
+          echo "$MANIFEST_TREE" | grep -Eq "android:extractNativeLibs.*=true"
           echo "$MANIFEST_TREE" | grep -q "android.intent.category.LAUNCHER"
+          echo "$MANIFEST_TREE" | grep -q "com.scluzlep.miimeprivacy.ACTION_OPEN_SETTINGS"
           echo "$MANIFEST_TREE" | grep -q "io.github.libxposed.service.XposedProvider"
+          echo "$MANIFEST_TREE" | grep -q "com.scluzlep.miimeprivacy.bridge.PrivacySyncProvider"
+          echo "$MANIFEST_TREE" | grep -q "com.scluzlep.miimeprivacy.bridge.PrivacySyncReceiver"
           echo "$MANIFEST_TREE" | grep -q "com.scluzlep.miimeprivacy.tile.CloudToggleTileService"
           if echo "$MANIFEST_TREE" | grep -q "xposedminversion"; then
             echo "::error::Legacy xposedminversion metadata present in release APK"
@@ -294,11 +304,13 @@ jobs:
               }
               assert expected_scopes.issubset(scopes), f"scope.list missing targets: {expected_scopes - scopes}"
 
-              dexkit_entries = [info for info in zf.infolist() if info.filename.endswith("/libdexkit.so")]
-              assert dexkit_entries, "libdexkit.so missing from release APK"
-              for info in dexkit_entries:
-                  assert info.compress_type == 0, f"{info.filename} must be uncompressed in release APK"
-          print("Verified release APK libxposed API 102 structure and uncompressed libdexkit.so")
+              dexkit_entries = {info.filename: info for info in zf.infolist() if info.filename.endswith("/libdexkit.so")}
+              for abi in ("arm64-v8a", "armeabi-v7a"):
+                  so_path = f"lib/{abi}/libdexkit.so"
+                  assert so_path in dexkit_entries, f"{so_path} missing from release APK"
+              for filename, info in dexkit_entries.items():
+                  assert info.file_size > 0, f"{filename} must be non-empty in release APK (got file_size={info.file_size})"
+          print("Verified release APK libxposed API 102 structure and extractable libdexkit.so")
           PY
 
           echo "apk_file=$OUT_APK" >> "$GITHUB_OUTPUT"

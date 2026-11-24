@@ -573,7 +573,7 @@ object SogouHookPack : ImeHookPack {
         )
         val cloudMgrCls = cloudMgrRes.value
         if (cloudMgrCls != null) {
-            val j2Class = SymbolResolver.loadClassOrNull("com.sohu.inputmethod.sogou.settings.j2", classLoader)
+            val j2Class = SymbolResolver.loadClassOrNull("com.sohu.inputmethod.sogou.j2", classLoader)
             cachedCloudMgrRefs = CloudMgrRefs(cloudMgrCls, j2Class)
             val refs = cachedCloudMgrRefs!!
 
@@ -697,7 +697,7 @@ object SogouHookPack : ImeHookPack {
             fastPath = { cl ->
                 val cls = SymbolResolver.loadClassOrNull("com.sohu.inputmethod.input.CloudWebSocketSender", cl)
                 val reqCls = SymbolResolver.loadClassOrNull(
-                    "com.sohu.inputmethod.input.data.BaseInputRequestInfo",
+                    "com.sogou.inputmethod.sogou.cloud.data.BaseInputRequestInfo",
                     cl
                 )
                 if (cls != null && reqCls != null) {
@@ -747,7 +747,7 @@ object SogouHookPack : ImeHookPack {
             fastPath = { cl ->
                 val cls = SymbolResolver.loadClassOrNull("com.sohu.inputmethod.input.InputRequestsSender", cl)
                 val reqCls = SymbolResolver.loadClassOrNull(
-                    "com.sohu.inputmethod.input.data.BaseInputRequestInfo",
+                    "com.sogou.inputmethod.sogou.cloud.data.BaseInputRequestInfo",
                     cl
                 )
                 if (cls != null && reqCls != null) {

@@ -60,7 +60,7 @@
 
 ### CI 发布与 `android-sig` 签名校验
 
-GitHub Actions 工作流（[`.github/workflows/build-release.yml`](.github/workflows/build-release.yml)）在 `check` 阶段校验单元测试、`META-INF/xposed/*` 纯 LF 换行与 API 102 元数据、`libdexkit.so` 未压缩存储（`compress_type == 0`）及清单组件（`LAUNCHER`、`XposedProvider`、`CloudToggleTileService` 且无 `xposedminversion`）；打 `v*` 标签或手动触发发布时自动 `zipalign` 并使用 SigHelper PKCS#12 密钥签名生成 `miimeprivacy-<tag>.apk` 与 `SHA256SUMS.txt`。
+GitHub Actions 工作流（[`.github/workflows/build-release.yml`](.github/workflows/build-release.yml)）在 `check` 阶段校验单元测试、`META-INF/xposed/*` 纯 LF 换行与 API 102 元数据、`libdexkit.so` 多 ABI 动态库打包（`arm64-v8a` / `armeabi-v7a` 非空且 `android:extractNativeLibs=true`）及清单组件（`LAUNCHER`、`XposedProvider`、`CloudToggleTileService` 且无 `xposedminversion`）；打 `v*` 标签或手动触发发布时自动 `zipalign` 并使用 SigHelper PKCS#12 密钥签名生成 `miimeprivacy-<tag>.apk` 与 `SHA256SUMS.txt`。
 
 校验已发布的 Release APK 签名：
 

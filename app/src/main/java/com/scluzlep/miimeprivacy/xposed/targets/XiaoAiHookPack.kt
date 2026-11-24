@@ -107,7 +107,8 @@ internal object XiaoAiAnchors {
     val SPEECH_ASR_STRINGS = listOf("SpeechAsrManager", "hotwordsJson")
 
     const val CLASS_TAIYI_SERVICE = "rc.j"
-    val TAIYI_SERVICE_STRINGS = listOf("com.xiaomi.taiyi.sdk.common.ConnectCallback", "ServiceConnection(")
+    val TAIYI_SERVICE_STRINGS = listOf("init bind service SecurityException. ", "ServiceConnection(")
+    val TAIYI_CONNECT_STRINGS = listOf("init service bind start")
     const val CLASS_TAIYI_MANAGER = "rc.b"
     const val CLASS_TAIYI_REQUEST = "com.xiaomi.taiyi.sdk.transfer.data.AIRequest"
     const val CLASS_TAIYI_RESPONSE = "com.xiaomi.taiyi.sdk.transfer.data.AIResponse"
@@ -1323,7 +1324,7 @@ object XiaoAiHookPack : ImeHookPack {
             dexKitMatcher = { cls ->
                 MethodMatcher.create()
                     .declaredClass(cls.name)
-                    .usingStrings(XiaoAiAnchors.TAIYI_SERVICE_STRINGS)
+                    .usingStrings(XiaoAiAnchors.TAIYI_CONNECT_STRINGS)
                     .paramCount(2)
             },
             structuralFallback = { cls ->
