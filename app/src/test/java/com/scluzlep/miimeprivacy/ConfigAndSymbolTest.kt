@@ -12,6 +12,7 @@ import com.scluzlep.miimeprivacy.model.HookRuleCatalog
 import com.scluzlep.miimeprivacy.model.HookRuleReport
 import com.scluzlep.miimeprivacy.model.ImeRuntimeDiagnostics
 import com.scluzlep.miimeprivacy.model.ImeTarget
+import com.scluzlep.miimeprivacy.xposed.HookRegistry
 import com.scluzlep.miimeprivacy.xposed.SymbolResolver
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -222,6 +223,57 @@ class ConfigAndSymbolTest {
         val ctor = SampleTarget::class.java.getDeclaredConstructor(String::class.java)
         val ctorDesc = SymbolResolver.executableToDescriptor(ctor)
         assertEquals(ctor, SymbolResolver.descriptorToExecutable(ctorDesc, loader))
+    }
+
+    @Test
+    fun subHookAggregationCoversAllFailureDegradedFallbackAndActiveStates() {
+        val ruleId = HookRuleCatalog.RULE_SOGOU_PRIVACY_GATE
+
+        // All failed -> FAILED
+        val allFailed = HookRegistry.aggregateSubHookOutcomes(
+            ruleId = ruleId,
+            outcomes = listOf(
+                HookRegistry.SubHookOutcome("h1", HookMatchStatus.FAILED, detail = "missing A"),
+                HookRegistry.SubHookOutcome("h2", HookMatchStatus.FAILED, detail = "missing B")
+            )
+        )
+        assertEquals(HookMatchStatus.FAILED, allFailed.status)
+        assertTrue(allFailed.detail.contains("h1"))
+        assertTrue(allFailed.detail.contains("h2"))
+
+        // Mixed success + failure -> DEGRADED
+        val partialFail = HookRegistry.aggregateSubHookOutcomes(
+            ruleId = ruleId,
+            outcomes = listOf(
+                HookRegistry.SubHookOutcome("h1", HookMatchStatus.ACTIVE, "A#m", "FAST_PATH"),
+                HookRegistry.SubHookOutcome("h2", HookMatchStatus.FAILED, detail = "missing B")
+            ),
+            blockedCount = 5L
+        )
+        assertEquals(HookMatchStatus.DEGRADED, partialFail.status)
+        assertEquals(5L, partialFail.blockedCount)
+        assertTrue(partialFail.detail.contains("h2"))
+
+        // No failures + any FALLBACK -> FALLBACK
+        val fallbackAgg = HookRegistry.aggregateSubHookOutcomes(
+            ruleId = ruleId,
+            outcomes = listOf(
+                HookRegistry.SubHookOutcome("h1", HookMatchStatus.ACTIVE, "A#m", "FAST_PATH"),
+                HookRegistry.SubHookOutcome("h2", HookMatchStatus.FALLBACK, "B#n", "STRUCTURAL_FALLBACK")
+            )
+        )
+        assertEquals(HookMatchStatus.FALLBACK, fallbackAgg.status)
+
+        // All ACTIVE -> ACTIVE
+        val activeAgg = HookRegistry.aggregateSubHookOutcomes(
+            ruleId = ruleId,
+            outcomes = listOf(
+                HookRegistry.SubHookOutcome("h1", HookMatchStatus.ACTIVE, "A#m", "FAST_PATH"),
+                HookRegistry.SubHookOutcome("h2", HookMatchStatus.ACTIVE, "B#n", "DEXKIT")
+            )
+        )
+        assertEquals(HookMatchStatus.ACTIVE, activeAgg.status)
+        assertEquals("FAST_PATH,DEXKIT", activeAgg.source)
     }
 
     private class SampleTarget(val label: String) {

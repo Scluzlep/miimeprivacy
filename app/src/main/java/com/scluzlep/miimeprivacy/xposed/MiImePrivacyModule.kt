@@ -7,6 +7,7 @@ import android.content.pm.ApplicationInfo
 import android.os.Build
 import android.util.Log
 import com.scluzlep.miimeprivacy.config.PrivacyConfig
+import com.scluzlep.miimeprivacy.model.HookRuleCatalog
 import com.scluzlep.miimeprivacy.model.ImeTarget
 import com.scluzlep.miimeprivacy.xposed.overlay.KeyboardQuickPillHook
 import com.scluzlep.miimeprivacy.xposed.targets.BaiduHookPack
@@ -23,6 +24,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class MiImePrivacyModule : XposedModule() {
 
     private val targetPacksInstalled = AtomicBoolean(false)
+    private val overlayInstalled = AtomicBoolean(false)
 
     @Volatile
     private var isSystemServerProcess: Boolean = false
@@ -61,6 +63,7 @@ class MiImePrivacyModule : XposedModule() {
         currentClassLoader = param.classLoader
         currentAppInfo = param.applicationInfo
         targetPacksInstalled.set(false)
+        overlayInstalled.set(false)
 
         val registry = createRegistry(
             target = target,
@@ -182,6 +185,7 @@ class MiImePrivacyModule : XposedModule() {
         ConfigBridge.attachContext(appCtx)
 
         targetPacksInstalled.set(false)
+        overlayInstalled.set(false)
         val registry = createRegistry(
             target = target,
             appInfo = appInfo,
@@ -204,19 +208,50 @@ class MiImePrivacyModule : XposedModule() {
         configListener?.let { ConfigBridge.removeListener(it) }
         val listener: (PrivacyConfig, PrivacyConfig) -> Unit = { oldCfg, newCfg ->
             KeyboardQuickPillHook.onConfigChanged(oldCfg, newCfg)
-            if (!targetPacksInstalled.get() && newCfg.isImeManaged(target)) {
-                val ctx = registry.attachedContext ?: currentApplicationByReflection()?.let { it.applicationContext ?: it }
+            val ctx = registry.attachedContext ?: currentApplicationByReflection()?.let { it.applicationContext ?: it }
+            if (oldCfg.isImeManaged(target) && !newCfg.isImeManaged(target)) {
+                registry.unhookActiveTargetHooks(keepPrefixes = setOf("lifecycle:", "overlay:"))
+                targetPacksInstalled.set(false)
+                val overlayRuleId = HookRuleCatalog.overlayRuleIdFor(target)
+                registry.reportAllSkipped(
+                    reason = "已关闭对该输入法的隐私接管",
+                    excludeRuleIds = setOf(overlayRuleId)
+                )
+                registry.pushDiagnosticsNow(ctx, note = "未接管")
+            } else if (!targetPacksInstalled.get() && newCfg.isImeManaged(target)) {
                 if (ctx != null) {
                     installTargetPacksIfManaged(target, ctx, classLoader, appInfo, registry)
                 }
             } else if (oldCfg.effectiveCloudEnabled(target) != newCfg.effectiveCloudEnabled(target) ||
                 oldCfg.isImeManaged(target) != newCfg.isImeManaged(target)
             ) {
-                registry.pushDiagnosticsNow(registry.attachedContext)
+                registry.pushDiagnosticsNow(ctx)
             }
         }
         configListener = listener
         ConfigBridge.addListener(listener)
+    }
+
+    private fun installOverlayIfNeeded(
+        target: ImeTarget,
+        context: Context,
+        classLoader: ClassLoader,
+        appInfo: ApplicationInfo,
+        registry: HookRegistry
+    ) {
+        if (!overlayInstalled.compareAndSet(false, true)) return
+        runCatching {
+            KeyboardQuickPillHook.install(
+                target = target,
+                context = context,
+                classLoader = classLoader,
+                appInfo = appInfo,
+                registry = registry
+            )
+        }.onFailure { err ->
+            overlayInstalled.set(false)
+            registry.logWarn("KeyboardQuickPillHook install failed", err)
+        }
     }
 
     private fun installTargetPacksIfManaged(
@@ -227,8 +262,14 @@ class MiImePrivacyModule : XposedModule() {
         registry: HookRegistry
     ) {
         registry.attachContext(context)
+        installOverlayIfNeeded(target, context, classLoader, appInfo, registry)
+
         if (!ConfigBridge.isTargetManaged(target)) {
-            registry.reportAllSkipped("已关闭对该输入法的隐私接管")
+            val overlayRuleId = HookRuleCatalog.overlayRuleIdFor(target)
+            registry.reportAllSkipped(
+                reason = "已关闭对该输入法的隐私接管",
+                excludeRuleIds = setOf(overlayRuleId)
+            )
             registry.pushDiagnosticsNow(context, note = "未接管")
             return
         }
@@ -240,18 +281,6 @@ class MiImePrivacyModule : XposedModule() {
         }.onFailure { err ->
             registry.logWarn("Target pack install threw exception", err)
         }.getOrNull()
-
-        runCatching {
-            KeyboardQuickPillHook.install(
-                target = target,
-                context = context,
-                classLoader = classLoader,
-                appInfo = appInfo,
-                registry = registry
-            )
-        }.onFailure { err ->
-            registry.logWarn("KeyboardQuickPillHook install failed", err)
-        }
 
         registry.pushDiagnosticsNow(
             context = context,

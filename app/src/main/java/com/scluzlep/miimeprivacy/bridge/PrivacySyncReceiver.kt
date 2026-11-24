@@ -3,6 +3,7 @@ package com.scluzlep.miimeprivacy.bridge
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import com.scluzlep.miimeprivacy.config.ConfigContract
 import com.scluzlep.miimeprivacy.config.PrivacyConfig
 import com.scluzlep.miimeprivacy.model.ImeRuntimeDiagnostics
@@ -17,6 +18,13 @@ class PrivacySyncReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
         if (context == null || intent == null) return
         if (intent.action != ConfigContract.ACTION_SYNC_FROM_IME) return
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val sender = sentFromPackage
+            if (sender != null && ImeTarget.fromPackage(sender) == null && sender != ConfigContract.MODULE_PACKAGE) {
+                return
+            }
+        }
 
         XposedServiceManager.init(context)
 

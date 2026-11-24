@@ -28,6 +28,7 @@ class HookRegistry(
 ) {
     private val activeHandles = linkedMapOf<String, XposedInterface.HookHandle>()
     private val ruleReports = ConcurrentHashMap<String, HookRuleReport>()
+    private val subHookOutcomes = ConcurrentHashMap<String, MutableList<SubHookOutcome>>()
     private val blockCounters = ConcurrentHashMap<String, AtomicLong>()
     private val lastPushMs = AtomicLong(0L)
 
@@ -74,12 +75,15 @@ class HookRegistry(
     ): Boolean {
         val executable = resolveResult.value
         if (executable == null) {
-            reportRule(
+            recordSubHookOutcome(
                 ruleId = ruleId,
-                status = onFailureStatus,
-                matchedMethod = "",
-                source = resolveResult.source.name,
-                detail = resolveResult.detail.ifBlank { "symbol not resolved" }
+                outcome = SubHookOutcome(
+                    hookId = hookId,
+                    status = onFailureStatus,
+                    matchedMethod = "",
+                    source = resolveResult.source.name,
+                    detail = resolveResult.detail.ifBlank { "symbol not resolved" }
+                )
             )
             return false
         }
@@ -90,22 +94,28 @@ class HookRegistry(
             } else {
                 HookMatchStatus.ACTIVE
             }
-            reportRule(
+            recordSubHookOutcome(
                 ruleId = ruleId,
-                status = status,
-                matchedMethod = resolveResult.detail.ifBlank { SymbolResolver.formatExecutable(executable) },
-                source = resolveResult.source.name,
-                detail = resolveResult.descriptor
+                outcome = SubHookOutcome(
+                    hookId = hookId,
+                    status = status,
+                    matchedMethod = resolveResult.detail.ifBlank { SymbolResolver.formatExecutable(executable) },
+                    source = resolveResult.source.name,
+                    detail = resolveResult.descriptor
+                )
             )
             true
         }.getOrElse { err ->
             logWarn("Hook install failed for $hookId ($ruleId)", err)
-            reportRule(
+            recordSubHookOutcome(
                 ruleId = ruleId,
-                status = HookMatchStatus.FAILED,
-                matchedMethod = SymbolResolver.formatExecutable(executable),
-                source = resolveResult.source.name,
-                detail = err.message ?: err.javaClass.simpleName
+                outcome = SubHookOutcome(
+                    hookId = hookId,
+                    status = HookMatchStatus.FAILED,
+                    matchedMethod = SymbolResolver.formatExecutable(executable),
+                    source = resolveResult.source.name,
+                    detail = err.message ?: err.javaClass.simpleName
+                )
             )
             false
         }
@@ -146,42 +156,66 @@ class HookRegistry(
         hooker: XposedInterface.Hooker
     ): Int {
         if (clazz == null) {
-            reportRule(ruleId, HookMatchStatus.FAILED, "", ResolveSource.MISS.name, "missing class for $methodName")
+            recordSubHookOutcome(
+                ruleId = ruleId,
+                outcome = SubHookOutcome(
+                    hookId = hookIdPrefix,
+                    status = HookMatchStatus.FAILED,
+                    matchedMethod = "",
+                    source = ResolveSource.MISS.name,
+                    detail = "missing class for $methodName"
+                )
+            )
             return 0
         }
         val targets = clazz.declaredMethods.filter { it.name == methodName }
         if (targets.isEmpty()) {
-            reportRule(
+            recordSubHookOutcome(
                 ruleId = ruleId,
-                status = HookMatchStatus.FAILED,
-                matchedMethod = "${clazz.name}#$methodName",
-                source = ResolveSource.MISS.name,
-                detail = "no overloads matched"
+                outcome = SubHookOutcome(
+                    hookId = hookIdPrefix,
+                    status = HookMatchStatus.FAILED,
+                    matchedMethod = "${clazz.name}#$methodName",
+                    source = ResolveSource.MISS.name,
+                    detail = "no overloads matched"
+                )
             )
             return 0
         }
         var installed = 0
         targets.forEachIndexed { idx, method ->
+            val subId = "$hookIdPrefix#$idx"
             val ok = runCatching {
-                installOrReplaceHook("$hookIdPrefix#$idx", method, priority, hooker)
+                installOrReplaceHook(subId, method, priority, hooker)
                 true
             }.getOrElse { err ->
                 logWarn("hookAllMethods failed for ${clazz.name}#$methodName", err)
+                recordSubHookOutcome(
+                    ruleId = ruleId,
+                    outcome = SubHookOutcome(
+                        hookId = subId,
+                        status = HookMatchStatus.FAILED,
+                        matchedMethod = SymbolResolver.formatExecutable(method),
+                        source = source,
+                        detail = err.message ?: err.javaClass.simpleName
+                    )
+                )
                 false
             }
-            if (ok) installed++
+            if (ok) {
+                installed++
+                recordSubHookOutcome(
+                    ruleId = ruleId,
+                    outcome = SubHookOutcome(
+                        hookId = subId,
+                        status = HookMatchStatus.ACTIVE,
+                        matchedMethod = SymbolResolver.formatExecutable(method),
+                        source = source,
+                        detail = ""
+                    )
+                )
+            }
         }
-        val status = when {
-            installed == targets.size -> HookMatchStatus.ACTIVE
-            installed > 0 -> HookMatchStatus.DEGRADED
-            else -> HookMatchStatus.FAILED
-        }
-        reportRule(
-            ruleId = ruleId,
-            status = status,
-            matchedMethod = "${clazz.name}#$methodName (${installed}/${targets.size})",
-            source = source
-        )
         return installed
     }
 
@@ -192,6 +226,9 @@ class HookRegistry(
         source: String = "",
         detail: String = ""
     ) {
+        if (status == HookMatchStatus.SKIPPED || status == HookMatchStatus.PENDING) {
+            subHookOutcomes.remove(ruleId)
+        }
         val count = blockCounters.computeIfAbsent(ruleId) { AtomicLong(0L) }.get()
         ruleReports[ruleId] = HookRuleReport(
             ruleId = ruleId,
@@ -203,14 +240,44 @@ class HookRegistry(
         )
     }
 
-    fun reportAllSkipped(reason: String) {
+    fun reportAllSkipped(reason: String, excludeRuleIds: Set<String> = emptySet()) {
         for (spec in HookRuleCatalog.rulesFor(target)) {
+            if (spec.ruleId in excludeRuleIds) continue
+            subHookOutcomes.remove(spec.ruleId)
             reportRule(
                 ruleId = spec.ruleId,
                 status = HookMatchStatus.SKIPPED,
                 detail = reason
             )
         }
+        val extraKeys = (ruleReports.keys + subHookOutcomes.keys)
+            .filter { ruleId ->
+                ruleId !in excludeRuleIds && HookRuleCatalog.rulesFor(target).none { it.ruleId == ruleId }
+            }
+        for (extraId in extraKeys) {
+            subHookOutcomes.remove(extraId)
+            reportRule(
+                ruleId = extraId,
+                status = HookMatchStatus.SKIPPED,
+                detail = reason
+            )
+        }
+    }
+
+    private fun recordSubHookOutcome(ruleId: String, outcome: SubHookOutcome) {
+        val snapshot: List<SubHookOutcome>
+        val list = subHookOutcomes.computeIfAbsent(ruleId) { mutableListOf() }
+        synchronized(list) {
+            val existingIdx = list.indexOfFirst { it.hookId == outcome.hookId }
+            if (existingIdx >= 0) {
+                list[existingIdx] = outcome
+            } else {
+                list.add(outcome)
+            }
+            snapshot = list.toList()
+        }
+        val count = blockCounters.computeIfAbsent(ruleId) { AtomicLong(0L) }.get()
+        ruleReports[ruleId] = aggregateSubHookOutcomes(ruleId, snapshot, count)
     }
 
     fun incrementBlocked(ruleId: String, delta: Long = 1L) {
@@ -356,8 +423,72 @@ class HookRegistry(
             .intercept(hooker)
     }
 
+    data class SubHookOutcome(
+        val hookId: String,
+        val status: HookMatchStatus,
+        val matchedMethod: String = "",
+        val source: String = "",
+        val detail: String = ""
+    )
+
     companion object {
         private const val TAG = "MiImePrivacy"
         private const val DIAGNOSTICS_PUSH_INTERVAL_MS = 1500L
+
+        fun aggregateSubHookOutcomes(
+            ruleId: String,
+            outcomes: List<SubHookOutcome>,
+            blockedCount: Long = 0L
+        ): HookRuleReport {
+            if (outcomes.isEmpty()) {
+                return HookRuleReport(
+                    ruleId = ruleId,
+                    status = HookMatchStatus.PENDING,
+                    blockedCount = blockedCount
+                )
+            }
+            val failed = outcomes.filter { it.status == HookMatchStatus.FAILED }
+            val succeeded = outcomes.filter {
+                it.status == HookMatchStatus.ACTIVE ||
+                    it.status == HookMatchStatus.FALLBACK ||
+                    it.status == HookMatchStatus.DEGRADED
+            }
+            val aggregatedStatus = when {
+                succeeded.isEmpty() && failed.isNotEmpty() -> HookMatchStatus.FAILED
+                succeeded.isNotEmpty() && failed.isNotEmpty() -> HookMatchStatus.DEGRADED
+                succeeded.isEmpty() && failed.isEmpty() -> {
+                    if (outcomes.all { it.status == HookMatchStatus.SKIPPED }) {
+                        HookMatchStatus.SKIPPED
+                    } else {
+                        HookMatchStatus.PENDING
+                    }
+                }
+                outcomes.any { it.status == HookMatchStatus.DEGRADED } -> HookMatchStatus.DEGRADED
+                outcomes.any { it.status == HookMatchStatus.FALLBACK } -> HookMatchStatus.FALLBACK
+                else -> HookMatchStatus.ACTIVE
+            }
+
+            val distinctMethods = outcomes.map { it.matchedMethod }.filter { it.isNotBlank() }.distinct()
+            val matchedMethodSummary = when {
+                distinctMethods.isEmpty() -> ""
+                distinctMethods.size == 1 && outcomes.size == 1 -> distinctMethods.first()
+                else -> "${succeeded.size}/${outcomes.size} (${distinctMethods.take(3).joinToString(", ")})"
+            }
+            val sourceSummary = outcomes.map { it.source }.filter { it.isNotBlank() }.distinct().joinToString(",")
+            val detailSummary = if (failed.isNotEmpty()) {
+                failed.joinToString("; ") { "${it.hookId}: ${it.detail.ifBlank { "failed" }}" }
+            } else {
+                outcomes.map { it.detail }.firstOrNull { it.isNotBlank() }.orEmpty()
+            }
+
+            return HookRuleReport(
+                ruleId = ruleId,
+                status = aggregatedStatus,
+                matchedMethod = matchedMethodSummary,
+                source = sourceSummary,
+                blockedCount = blockedCount,
+                detail = detailSummary
+            )
+        }
     }
 }
