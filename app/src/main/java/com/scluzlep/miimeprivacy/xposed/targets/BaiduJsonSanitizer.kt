@@ -107,6 +107,32 @@ object BaiduJsonSanitizer {
      */
     fun shouldBlockHttpDns(blockHttpDns: Boolean): Boolean = blockHttpDns
 
+    /**
+     * Resolves RxJava `Observable.empty()` (`0`-arg static method `empty`) for `fg.w#b(x6.a)`
+     * so blocked `case 5` returns a non-null empty `Observable` without NPE in `.flatMap(...)`.
+     */
+    fun findRxEmptyObservableMethod(returnType: Class<*>): java.lang.reflect.Method? =
+        runCatching { returnType.getMethod("empty") }.getOrNull()
+
+    /**
+     * Invokes a resolved RxJava `Observable.empty()` method safely.
+     */
+    fun invokeRxEmptyObservable(emptyMethod: java.lang.reflect.Method?): Any? =
+        emptyMethod?.let { runCatching { it.invoke(null) }.getOrNull() }
+
+    /**
+     * Resolves obfuscated `pe1.x.e(Object)` (`Single.just(Object)`) for `fg.w#c(kh0.j)` so blocked
+     * `case 5` returns a non-null `Single<Boolean>` (`false`) without NPE in `.f(...)`.
+     */
+    fun findRxSingleJustMethod(returnType: Class<*>): java.lang.reflect.Method? =
+        runCatching { returnType.getMethod("e", Any::class.java) }.getOrNull()
+
+    /**
+     * Invokes `pe1.x.e(value)` cleanly for a boolean completion value.
+     */
+    fun invokeRxSingleBoolean(singleJustMethod: java.lang.reflect.Method?, value: Boolean): Any? =
+        singleJustMethod?.let { runCatching { it.invoke(null, value) }.getOrNull() }
+
     private fun applyPatches(original: ByteArray, patches: List<BytePatch>): ByteArray {
         var delta = 0
         for (patch in patches) {

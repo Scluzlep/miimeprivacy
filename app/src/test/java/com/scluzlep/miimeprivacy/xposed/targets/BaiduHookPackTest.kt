@@ -208,4 +208,31 @@ class BaiduHookPackTest {
         val forcedOff = PrivacyConfig(allowCloudInput = true, baiduCloudOverride = CloudOverride.FORCE_OFF)
         assertFalse(forcedOff.effectiveCloudEnabled(ImeTarget.BAIDU))
     }
+
+    @Test
+    fun rxSalvageFallbacks_returnNonNullEmptyObservableAndSingleFalseSafely() {
+        val emptyMethod = BaiduJsonSanitizer.findRxEmptyObservableMethod(FakeObservable::class.java)
+        assertEquals("FAKE_EMPTY_OBSERVABLE", BaiduJsonSanitizer.invokeRxEmptyObservable(emptyMethod))
+        assertNull(BaiduJsonSanitizer.findRxEmptyObservableMethod(Any::class.java))
+        assertNull(BaiduJsonSanitizer.invokeRxEmptyObservable(null))
+
+        val singleJustMethod = BaiduJsonSanitizer.findRxSingleJustMethod(FakePe1Single::class.java)
+        assertEquals("FAKE_SINGLE(false)", BaiduJsonSanitizer.invokeRxSingleBoolean(singleJustMethod, false))
+        assertNull(BaiduJsonSanitizer.findRxSingleJustMethod(Any::class.java))
+        assertNull(BaiduJsonSanitizer.invokeRxSingleBoolean(null, false))
+    }
+
+    private class FakeObservable {
+        companion object {
+            @JvmStatic
+            fun empty(): Any = "FAKE_EMPTY_OBSERVABLE"
+        }
+    }
+
+    private class FakePe1Single {
+        companion object {
+            @JvmStatic
+            fun e(value: Any?): Any = "FAKE_SINGLE($value)"
+        }
+    }
 }

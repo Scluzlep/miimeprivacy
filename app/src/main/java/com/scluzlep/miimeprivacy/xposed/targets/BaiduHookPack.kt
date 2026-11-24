@@ -231,7 +231,7 @@ object BaiduHookPack : ImeHookPack {
             hookId = "baidu.telemetry.sj0_case14",
             methodResult = sj0MethodResult,
             fieldCacheKey = "baidu:sj0_a_selector",
-            primaryFieldName = "f61702b",
+            primaryFieldName = "b",
             onMissingFieldDetail = "sj0.a selector field unresolved; keeping unhooked to preserve case 9",
             onFailureStatus = HookMatchStatus.FAILED,
             shouldBlockSelector = { selector ->
@@ -271,37 +271,21 @@ object BaiduHookPack : ImeHookPack {
             fastPathCandidates = listOf("com.baidu.ubc.BehaviorUploader")
         )
         val uploaderCls = ubcUploaderResult.value
-        if (uploaderCls != null) {
-            var hookedCount = 0
-            for (methodName in listOf("obUploadDataRequest", "uploadDataRequest")) {
-                hookedCount += registry.hookAllMethods(
-                    ruleId = ruleId,
-                    hookIdPrefix = "baidu.telemetry.ubc_$methodName",
-                    clazz = uploaderCls,
-                    methodName = methodName,
-                    source = ubcUploaderResult.source.name
-                ) { chain ->
-                    if (isRuleFlagEnabled { it.blockTelemetry }) {
-                        registry.incrementBlocked(ruleId)
-                        null
-                    } else {
-                        chain.proceed()
-                    }
+        for (methodName in listOf("obUploadDataRequest", "uploadDataRequest")) {
+            registry.hookAllMethods(
+                ruleId = ruleId,
+                hookIdPrefix = "baidu.telemetry.ubc_$methodName",
+                clazz = uploaderCls,
+                methodName = methodName,
+                source = ubcUploaderResult.source.name
+            ) { chain ->
+                if (isRuleFlagEnabled { it.blockTelemetry }) {
+                    registry.incrementBlocked(ruleId)
+                    null
+                } else {
+                    chain.proceed()
                 }
             }
-            if (hookedCount == 0) {
-                registry.reportRule(
-                    ruleId = ruleId,
-                    status = HookMatchStatus.DEGRADED,
-                    detail = "No BehaviorUploader upload methods matched"
-                )
-            }
-        } else {
-            registry.reportRule(
-                ruleId = ruleId,
-                status = HookMatchStatus.DEGRADED,
-                detail = "com.baidu.ubc.BehaviorUploader unresolved"
-            )
         }
 
         // 4) com.baidu.mobstat.LogSender#saveLogData(Context, String, boolean)
@@ -621,7 +605,9 @@ object BaiduHookPack : ImeHookPack {
             dexKitFinder = { bridge ->
                 bridge.findMethod {
                     matcher {
-                        usingStrings("needFinishInPrivacyInputMode")
+                        usingStrings("isNeedShowFlowDialog = ", ",isPrivacyInputMode")
+                        returnType("boolean")
+                        paramCount(0)
                     }
                 }.singleOrNull()
                     ?.usingFields
@@ -704,7 +690,7 @@ object BaiduHookPack : ImeHookPack {
             fastPathCandidates = listOf("bl.c")
         ).value
         val blContextField: Field? = blClass?.superclass?.let { parent ->
-            findDeclaredFieldOrNull(parent, "f69940a")
+            findDeclaredFieldOrNull(parent, "a")
                 ?: parent.declaredFields.firstOrNull { ContextWrapper::class.java.isAssignableFrom(it.type) }
                     ?.apply { isAccessible = true }
         }
@@ -808,7 +794,10 @@ object BaiduHookPack : ImeHookPack {
                 dexKitFinder = { bridge ->
                     bridge.findMethod {
                         matcher {
-                            usingStrings("content://sms/inbox")
+                            declaredClass {
+                                usingStrings("android.permission.READ_SMS", "count_contsign")
+                            }
+                            usingStrings("android.permission.READ_SMS")
                             returnType("boolean")
                             paramCount(0)
                         }
@@ -840,7 +829,7 @@ object BaiduHookPack : ImeHookPack {
                     bridge.findMethod {
                         matcher {
                             name = "onChange"
-                            usingStrings("content://sms/inbox")
+                            usingStrings("content://sms/inbox-insert")
                             paramTypes("boolean", "android.net.Uri")
                         }
                     }.singleOrNull()?.descriptor
@@ -953,7 +942,7 @@ object BaiduHookPack : ImeHookPack {
                 }
             ),
             fieldCacheKey = "baidu:rj0_b_selector",
-            primaryFieldName = "f60200d",
+            primaryFieldName = "d",
             onMissingFieldDetail = "rj0.b selector field unresolved; leaving app scan task unhooked",
             onFailureStatus = HookMatchStatus.DEGRADED,
             shouldBlockSelector = { selector ->
@@ -1040,7 +1029,7 @@ object BaiduHookPack : ImeHookPack {
         )
         val collectorMethod = collectorResult.value
         val emitterField: Field? = collectorMethod?.declaringClass?.let { cls ->
-            findDeclaredFieldOrNull(cls, "f45619b")
+            findDeclaredFieldOrNull(cls, "b")
                 ?: cls.declaredFields.firstOrNull { field ->
                     !Modifier.isStatic(field.modifiers) &&
                         !field.type.isPrimitive &&
@@ -1066,41 +1055,36 @@ object BaiduHookPack : ImeHookPack {
             null
         }
 
-        // 2) fg.w#b(*) & #c(*) case 5 (mobile_log_salvage notification handler)
+        // 2) fg.w#b(x6.a)->Observable & #c(kh0.j)->pe1.x case 5 (mobile_log_salvage).
+        // Must return Observable.empty() / pe1.x.e(false) rather than null to prevent RxJava NPE.
         val fgWClass = resolver.resolveClass(
             cacheKey = "baidu:fg_w_class",
             fastPathCandidates = listOf("fg.w")
         ).value
-        if (fgWClass != null) {
-            for (methodName in listOf("b", "c")) {
-                val fgMethodResult = resolver.resolveMethod(
-                    cacheKey = "baidu:fg_w_$methodName",
-                    fastPath = { _ ->
-                        fgWClass.declaredMethods.singleOrNull {
-                            it.name == methodName && it.parameterCount == 1
-                        }
-                    }
-                )
-                hookIntSelectorTask(
-                    resolver = resolver,
-                    registry = registry,
-                    ruleId = ruleId,
-                    hookId = "baidu.salvage.fg_w_$methodName",
-                    methodResult = fgMethodResult,
-                    fieldCacheKey = "baidu:fg_w_selector",
-                    primaryFieldName = "f37448a",
-                    onMissingFieldDetail = "fg.w selector field unresolved; keeping unhooked to preserve non-salvage cases",
-                    onFailureStatus = HookMatchStatus.DEGRADED,
-                    shouldBlockSelector = { selector ->
-                        BaiduJsonSanitizer.shouldBlockSalvageTask(
-                            selector = selector,
-                            blockRemoteLogSalvage = isRuleFlagEnabled { it.blockRemoteLogSalvage }
-                        )
-                    },
-                    blockedResult = { null }
-                )
-            }
-        }
+        hookRxSalvageVariant(
+            resolver = resolver,
+            registry = registry,
+            ruleId = ruleId,
+            fgWClass = fgWClass,
+            methodName = "b",
+            hookId = "baidu.salvage.fg_w_b",
+            methodCacheKey = "baidu:fg_w_b",
+            missingRxDetail = "fg.w#b Observable.empty() missing; keeping unhooked to prevent RxJava NPE",
+            resolveRxMethod = { retType -> BaiduJsonSanitizer.findRxEmptyObservableMethod(retType) },
+            invokeRxFallback = { rxMethod -> BaiduJsonSanitizer.invokeRxEmptyObservable(rxMethod) }
+        )
+        hookRxSalvageVariant(
+            resolver = resolver,
+            registry = registry,
+            ruleId = ruleId,
+            fgWClass = fgWClass,
+            methodName = "c",
+            hookId = "baidu.salvage.fg_w_c",
+            methodCacheKey = "baidu:fg_w_c",
+            missingRxDetail = "fg.w#c pe1.x.e(Object) missing; keeping unhooked to prevent RxJava NPE",
+            resolveRxMethod = { retType -> BaiduJsonSanitizer.findRxSingleJustMethod(retType) },
+            invokeRxFallback = { rxMethod -> BaiduJsonSanitizer.invokeRxSingleBoolean(rxMethod, false) }
+        )
 
         // 3) Remote unsigned DEX plugin loader: com.baidu.input.pl.impl.a#a(oi0.g):void
         hookSimpleBlock(
@@ -1274,11 +1258,17 @@ object BaiduHookPack : ImeHookPack {
             null
         }
         if (method != null && selectorField == null) {
-            registry.reportRule(
+            registry.hookExecutable(
                 ruleId = ruleId,
-                status = HookMatchStatus.DEGRADED,
-                detail = onMissingFieldDetail
-            )
+                hookId = hookId,
+                resolveResult = ResolveResult(
+                    value = null,
+                    source = com.scluzlep.miimeprivacy.xposed.ResolveSource.MISS,
+                    descriptor = methodResult.descriptor,
+                    detail = onMissingFieldDetail
+                ),
+                onFailureStatus = HookMatchStatus.DEGRADED
+            ) { it.proceed() }
             return
         }
         registry.hookExecutable(
@@ -1300,6 +1290,59 @@ object BaiduHookPack : ImeHookPack {
                 chain.proceed()
             }
         }
+    }
+
+    private inline fun hookRxSalvageVariant(
+        resolver: SymbolResolver,
+        registry: HookRegistry,
+        ruleId: String,
+        fgWClass: Class<*>?,
+        methodName: String,
+        hookId: String,
+        methodCacheKey: String,
+        missingRxDetail: String,
+        crossinline resolveRxMethod: (Class<*>) -> Method?,
+        crossinline invokeRxFallback: (Method?) -> Any?
+    ) {
+        val methodResult = resolver.resolveMethod(
+            cacheKey = methodCacheKey,
+            fastPath = { _ ->
+                fgWClass?.declaredMethods?.singleOrNull { it.name == methodName && it.parameterCount == 1 }
+            }
+        )
+        val rxMethod = methodResult.value?.returnType?.let(resolveRxMethod)
+        if (methodResult.value != null && rxMethod == null) {
+            registry.hookExecutable(
+                ruleId = ruleId,
+                hookId = hookId,
+                resolveResult = ResolveResult(
+                    value = null,
+                    source = com.scluzlep.miimeprivacy.xposed.ResolveSource.MISS,
+                    descriptor = methodResult.descriptor,
+                    detail = missingRxDetail
+                ),
+                onFailureStatus = HookMatchStatus.DEGRADED
+            ) { it.proceed() }
+            return
+        }
+        hookIntSelectorTask(
+            resolver = resolver,
+            registry = registry,
+            ruleId = ruleId,
+            hookId = hookId,
+            methodResult = methodResult,
+            fieldCacheKey = "baidu:fg_w_selector",
+            primaryFieldName = "a",
+            onMissingFieldDetail = "fg.w selector field unresolved; keeping unhooked to preserve non-salvage cases",
+            onFailureStatus = HookMatchStatus.DEGRADED,
+            shouldBlockSelector = { selector ->
+                BaiduJsonSanitizer.shouldBlockSalvageTask(
+                    selector = selector,
+                    blockRemoteLogSalvage = isRuleFlagEnabled { it.blockRemoteLogSalvage }
+                )
+            },
+            blockedResult = { invokeRxFallback(rxMethod) }
+        )
     }
 
     private inline fun hookEnableBaiduDnsFalse(
