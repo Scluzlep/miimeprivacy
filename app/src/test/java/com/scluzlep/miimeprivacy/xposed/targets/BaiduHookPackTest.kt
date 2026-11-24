@@ -5,13 +5,16 @@ import com.scluzlep.miimeprivacy.config.PrivacyConfig
 import com.scluzlep.miimeprivacy.model.HookRuleCatalog
 import com.scluzlep.miimeprivacy.model.ImeTarget
 import com.scluzlep.miimeprivacy.xposed.ConfigBridge
+import com.scluzlep.miimeprivacy.xposed.SymbolResolver
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 class BaiduHookPackTest {
 
@@ -234,5 +237,138 @@ class BaiduHookPackTest {
             @JvmStatic
             fun e(value: Any?): Any = "FAKE_SINGLE($value)"
         }
+    }
+
+    @Test
+    fun baiduHookPackSource_avoidsDeclaredMethodsScansOnObfuscatedGodClasses() {
+        val source = readBaiduHookPackSource()
+
+        val forbiddenScans = listOf(
+            Regex("""loadClassOrNull\s*\(\s*"l11\.b"[\s\S]{0,120}?\.declaredMethods"""),
+            Regex("""contactsUploaderClass\??\.declaredMethods"""),
+            Regex("""loadClassOrNull\s*\(\s*"com\.baidu\.input\.pl\.impl\.a"[\s\S]{0,120}?\.declaredMethods"""),
+            Regex("""fgWClass\??\.declaredMethods"""),
+            Regex("""wenxinUploaderClass\??\.declaredMethods"""),
+            Regex("""imeEnvClass[\s\S]{0,120}?hookAllMethods""")
+        )
+        for (pattern in forbiddenScans) {
+            assertFalse(
+                "Forbidden declaredMethods/hookAllMethods scan matched: ${pattern.pattern}",
+                pattern.containsMatchIn(source)
+            )
+        }
+
+        // Only guarded declaredMethods inspection allowed is LogSender#onSend probe inside runCatching
+        val declaredMethodLines = source.lines().mapIndexedNotNull { idx, line ->
+            if (line.contains(".declaredMethods")) "${idx + 1}: ${line.trim()}" else null
+        }
+        assertEquals(
+            "Unexpected declaredMethods lines in BaiduHookPack.kt: $declaredMethodLines",
+            1,
+            declaredMethodLines.size
+        )
+        assertTrue(declaredMethodLines.single().contains("logSenderClass.declaredMethods"))
+
+        val requiredDirectParams = listOf(
+            "\"zg0.e\"",
+            "\"lp0.c\"",
+            "\"oi0.g\"",
+            "\"x6.a\"",
+            "\"kh0.j\"",
+            "\"pg.b\"",
+            "\"com.baidu.iptcore.info.IptAppMsgInfo\""
+        )
+        for (literal in requiredDirectParams) {
+            assertTrue("Expected direct parameter class $literal in FastPath", source.contains(literal))
+        }
+
+        // Verify findDeclaredMethodOrNull matches direct overload signature without enumerating class
+        val found = SymbolResolver.findDeclaredMethodOrNull(
+            FakeSingleMethodHolder::class.java,
+            "f1",
+            String::class.java
+        )
+        assertNotNull(found)
+    }
+
+    @Test
+    fun baiduHookPackSource_providesVerifiedDexKitAnchorsForObfuscatedTargets() {
+        val source = readBaiduHookPackSource()
+
+        val requiredDexKitCacheKeys = listOf(
+            "baidu:privacy_agreed_2439",
+            "baidu:tn0_e_is_privacy_agreed",
+            "baidu:ubc_helper_is_agree_privacy",
+            "baidu:dj0_y_settings",
+            "baidu:dj0_y_h",
+            "baidu:dj0_y_A",
+            "baidu:sj0_a_b",
+            "baidu:ju_a_k0",
+            "baidu:behavior_uploader",
+            "baidu:mobstat_log_sender",
+            "baidu:mobstat_save_log_data",
+            "baidu:x00_b_c",
+            "baidu:ipt_cloud_stream_send",
+            "baidu:voice_trace_class",
+            "baidu:voice_trace_context",
+            "baidu:voice_trace_upload",
+            "baidu:wenxin_context_210",
+            "baidu:wenxin_uploader",
+            "baidu:wenxin_uploader_\$methodName",
+            "baidu:dj0_l_privacy_input_mode",
+            "baidu:clipboard_global_listener",
+            "baidu:wg0_b_u",
+            "baidu:bl_c_class",
+            "baidu:bl_c_k1",
+            "baidu:clipboard_manager_j",
+            "baidu:clipboard_db_insert_j1",
+            "baidu:q30_e_o",
+            "baidu:q30_d_on_change",
+            "baidu:q30_f_run",
+            "baidu:t40_b_class",
+            "baidu:t40_b_a",
+            "baidu:t40_b_d",
+            "baidu:contacts_utils_query",
+            "baidu:rj0_b_b",
+            "baidu:ime_env_callback",
+            "baidu:ime_env_find_app",
+            "baidu:ime_env_has_install_app",
+            "baidu:l11_b_f1",
+            "baidu:js_a_h",
+            "baidu:fg_w_class",
+            "baidu:fg_w_b",
+            "baidu:fg_w_c",
+            "baidu:pl_impl_a_load"
+        )
+        for (cacheKey in requiredDexKitCacheKeys) {
+            val idx = source.indexOf("\"$cacheKey\"")
+            assertTrue("Missing cacheKey $cacheKey", idx >= 0)
+            val tail = source.substring(idx, minOf(source.length, idx + 1400))
+            assertTrue(
+                "Expected dexKitFinder near $cacheKey",
+                tail.contains("dexKitFinder = { bridge ->")
+            )
+        }
+
+        // Fixed broken matchers regression checks
+        assertTrue(source.contains("usingNumbers(2439)"))
+        assertTrue(source.contains("usingStrings(\"wapicon\")"))
+        assertTrue(source.contains("usingStrings(\"ime_pls_files\", \".apk\")"))
+        assertTrue(source.contains("name = \"isPrivacyAgreed\""))
+    }
+
+    private fun readBaiduHookPackSource(): String {
+        val candidates = listOf(
+            File("src/main/java/com/scluzlep/miimeprivacy/xposed/targets/BaiduHookPack.kt"),
+            File("app/src/main/java/com/scluzlep/miimeprivacy/xposed/targets/BaiduHookPack.kt")
+        )
+        val file = candidates.firstOrNull { it.isFile }
+            ?: error("Could not locate BaiduHookPack.kt from ${File(".").absolutePath}")
+        return file.readText()
+    }
+
+    private class FakeSingleMethodHolder {
+        @Suppress("unused")
+        fun f1(arg: String) = Unit
     }
 }
