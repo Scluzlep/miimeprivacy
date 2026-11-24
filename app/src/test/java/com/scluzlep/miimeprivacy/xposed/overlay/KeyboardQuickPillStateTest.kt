@@ -1,5 +1,6 @@
 package com.scluzlep.miimeprivacy.xposed.overlay
 
+import android.content.res.Configuration
 import android.inputmethodservice.InputMethodService
 import android.view.inputmethod.EditorInfo
 import com.scluzlep.miimeprivacy.config.CloudOverride
@@ -153,15 +154,25 @@ class KeyboardQuickPillStateTest {
         assertEquals(QuickPillStateMachine.TapOutcome.OpenPanel, QuickPillStateMachine.onLongPress())
 
         val base = PrivacyConfig(allowCloudInput = true, showKeyboardPill = true)
+        assertTrue(base.hidePillInLandscape)
         assertTrue(QuickPillStateMachine.shouldShowPill(base))
-        assertFalse(QuickPillStateMachine.shouldShowPill(base.copy(showKeyboardPill = false)))
+        assertTrue(QuickPillStateMachine.shouldShowPill(base, isLandscape = false))
+        assertFalse(QuickPillStateMachine.shouldShowPill(base, isLandscape = true))
+        assertTrue(QuickPillStateMachine.shouldShowPill(base.copy(hidePillInLandscape = false), isLandscape = true))
+        assertFalse(QuickPillStateMachine.shouldShowPill(base.copy(showKeyboardPill = false), isLandscape = false))
+        assertFalse(
+            QuickPillStateMachine.shouldShowPill(
+                base.copy(showKeyboardPill = false, hidePillInLandscape = false),
+                isLandscape = true
+            )
+        )
 
         assertEquals(
-            "🟢 受管 · 云输入(已脱敏)",
+            "🟢 云输入",
             QuickPillStateMachine.panelStatusText(ImeTarget.SOGOU, base, hasCriticalFailure = false)
         )
         assertEquals(
-            "🔒 受管 · 纯本地词库",
+            "🔒 纯本地",
             QuickPillStateMachine.panelStatusText(
                 ImeTarget.SOGOU,
                 base.copy(allowCloudInput = false),
@@ -169,7 +180,7 @@ class KeyboardQuickPillStateTest {
             )
         )
         assertEquals(
-            "🔴 未受管 · 暂停保护",
+            "🔴 未接管",
             QuickPillStateMachine.panelStatusText(
                 ImeTarget.SOGOU,
                 base.withImeManaged(ImeTarget.SOGOU, false),
@@ -177,7 +188,7 @@ class KeyboardQuickPillStateTest {
             )
         )
         assertEquals(
-            "🔴 关键规则异常，请点开主页检查",
+            "🔴 规则异常",
             QuickPillStateMachine.panelStatusText(ImeTarget.SOGOU, base, hasCriticalFailure = true)
         )
     }
@@ -262,8 +273,8 @@ class KeyboardQuickPillStateTest {
 
         // Extreme drag coordinates clamp to PrivacyConfig [MIN_PILL_OFFSET_DP, MAX_PILL_OFFSET_DP]
         val extremeOffset = QuickPillStateMachine.translationToPillOffset(
-            translationX = 5000f,
-            translationY = -5000f,
+            translationX = 9000f,
+            translationY = -9000f,
             visibleTopInsetsPx = 1500,
             density = density
         )
@@ -271,6 +282,36 @@ class KeyboardQuickPillStateTest {
             PillOffset(PrivacyConfig.MAX_PILL_OFFSET_DP, PrivacyConfig.MIN_PILL_OFFSET_DP),
             extremeOffset
         )
+
+        // Right-edge offsets (380dp, 440dp, 1200dp) persist and round-trip without snapping back to 300dp
+        val rightEdgeCases = listOf(
+            Triple(380, 1260, 3f),
+            Triple(440, 1440, 3f),
+            Triple(1200, 2800, 2f)
+        )
+        for ((offsetDp, wideContainerW, caseDensity) in rightEdgeCases) {
+            val stored = PrivacyConfig().withPillOffset(ImeTarget.SOGOU, offsetDp, 2).pillOffsetFor(ImeTarget.SOGOU)
+            assertEquals(offsetDp, stored.offsetXDp)
+            val rightPos = QuickPillStateMachine.computePillTranslation(
+                offset = stored,
+                visibleTopInsetsPx = visibleTop,
+                density = caseDensity,
+                containerWidthPx = wideContainerW,
+                containerHeightPx = containerH,
+                pillWidthPx = pillW,
+                pillHeightPx = pillH
+            )
+            assertEquals(offsetDp * caseDensity, rightPos.translationX, 0.001f)
+            assertEquals(
+                stored,
+                QuickPillStateMachine.translationToPillOffset(
+                    translationX = rightPos.translationX,
+                    translationY = rightPos.translationY,
+                    visibleTopInsetsPx = visibleTop,
+                    density = caseDensity
+                )
+            )
+        }
 
         // Pre-layout (0x0 container) preserves non-negative raw offset instead of collapsing to 0
         val preLayout = QuickPillStateMachine.computePillTranslation(
@@ -288,8 +329,11 @@ class KeyboardQuickPillStateTest {
 
     @Test
     fun alphaClampingAndTouchSlopChecksWork() {
+        assertEquals(0.10f, PrivacyConfig.MIN_PILL_ALPHA, 0.0001f)
         assertEquals(PrivacyConfig.DEFAULT_PILL_ALPHA, QuickPillStateMachine.clampAlpha(Float.NaN), 0.0001f)
         assertEquals(PrivacyConfig.MIN_PILL_ALPHA, QuickPillStateMachine.clampAlpha(0.05f), 0.0001f)
+        assertEquals(0.10f, QuickPillStateMachine.clampAlpha(0.10f), 0.0001f)
+        assertEquals(0.15f, QuickPillStateMachine.clampAlpha(0.15f), 0.0001f)
         assertEquals(PrivacyConfig.MAX_PILL_ALPHA, QuickPillStateMachine.clampAlpha(2.0f), 0.0001f)
         assertEquals(0.75f, QuickPillStateMachine.clampAlpha(0.75f), 0.0001f)
 
@@ -329,6 +373,15 @@ class KeyboardQuickPillStateTest {
         assertNotNull(fallbackFinish)
         assertEquals(ResolveSource.STRUCTURAL_FALLBACK, fallbackSource)
         assertEquals(InputMethodService::class.java, fallbackFinish?.declaringClass)
+
+        val (fallbackConfig, configSource) = KeyboardQuickPillHook.resolveImeLifecycleMethod(
+            ChildFakeImeService::class.java,
+            "onConfigurationChanged",
+            Configuration::class.java
+        )
+        assertNotNull(fallbackConfig)
+        assertEquals(ResolveSource.STRUCTURAL_FALLBACK, configSource)
+        assertEquals(InputMethodService::class.java, fallbackConfig?.declaringClass)
     }
 
     private open class BaseFakeImeService : InputMethodService() {

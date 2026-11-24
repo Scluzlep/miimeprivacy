@@ -62,6 +62,8 @@ class ConfigAndSymbolTest {
 
         // Pill & theme defaults
         assertTrue(cfg.showKeyboardPill)
+        assertTrue(cfg.hidePillInLandscape)
+        assertEquals(0.10f, PrivacyConfig.MIN_PILL_ALPHA, 0.0001f)
         assertEquals(0.88f, cfg.pillAlpha, 0.0001f)
         for (target in ImeTarget.entries) {
             assertEquals(PillOffset(12, 2), cfg.pillOffsetFor(target))
@@ -91,10 +93,14 @@ class ConfigAndSymbolTest {
 
     @Test
     fun sanitizedClampsAlphaOffsetsAndTimestamp() {
+        assertEquals(0.10f, PrivacyConfig.MIN_PILL_ALPHA, 0.0001f)
+        assertEquals(-2000, PrivacyConfig.MIN_PILL_OFFSET_DP)
+        assertEquals(2000, PrivacyConfig.MAX_PILL_OFFSET_DP)
+
         val dirty = PrivacyConfig(
             pillAlpha = Float.NaN,
-            sogouPillOffsetXDp = 999,
-            sogouPillOffsetYDp = -999,
+            sogouPillOffsetXDp = 3500,
+            sogouPillOffsetYDp = -3500,
             updatedAtMs = -42L
         ).sanitized()
 
@@ -104,13 +110,17 @@ class ConfigAndSymbolTest {
         assertEquals(0L, dirty.updatedAtMs)
 
         val lowAlpha = PrivacyConfig(pillAlpha = 0.01f).sanitized()
+        assertEquals(0.10f, lowAlpha.pillAlpha, 0.0001f)
         assertEquals(PrivacyConfig.MIN_PILL_ALPHA, lowAlpha.pillAlpha, 0.0001f)
 
-        val updated = PrivacyConfig().withPillOffset(ImeTarget.BAIDU, 500, -400)
+        val updated = PrivacyConfig().withPillOffset(ImeTarget.BAIDU, 3500, -3500)
         assertEquals(
             PillOffset(PrivacyConfig.MAX_PILL_OFFSET_DP, PrivacyConfig.MIN_PILL_OFFSET_DP),
             updated.pillOffsetFor(ImeTarget.BAIDU)
         )
+
+        val rightEdge = PrivacyConfig().withPillOffset(ImeTarget.XIAOAI, 1200, -1200)
+        assertEquals(PillOffset(1200, -1200), rightEdge.pillOffsetFor(ImeTarget.XIAOAI))
     }
 
     @Test
@@ -121,6 +131,7 @@ class ConfigAndSymbolTest {
             baiduCloudOverride = CloudOverride.FORCE_ON,
             blockHttpDns = true,
             blockXiaoAiHotwordTracker = true,
+            hidePillInLandscape = false,
             pillAlpha = 0.65f,
             xiaoaiPillOffsetXDp = 24,
             xiaoaiPillOffsetYDp = 8,
@@ -132,6 +143,8 @@ class ConfigAndSymbolTest {
 
         val parsed = PrivacyConfig.fromJson(original.toJson())
         assertEquals(original, parsed)
+        assertFalse(parsed.hidePillInLandscape)
+        assertTrue(PrivacyConfig.fromJson("{}").hidePillInLandscape)
         assertEquals(PrivacyConfig(), PrivacyConfig.fromJson("{not-json"))
         assertEquals(PrivacyConfig(), PrivacyConfig.fromJson(""))
     }
@@ -142,6 +155,7 @@ class ConfigAndSymbolTest {
         val cfg = PrivacyConfig(
             allowCloudInput = false,
             blockHttpDns = true,
+            hidePillInLandscape = false,
             sogouPillOffsetXDp = 30,
             paletteStyle = MonetPaletteStyle.Vibrant,
             updatedAtMs = 5000L

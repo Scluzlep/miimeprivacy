@@ -35,7 +35,8 @@ object QuickPillStateMachine {
         val translationY: Float
     )
 
-    fun shouldShowPill(config: PrivacyConfig): Boolean = config.showKeyboardPill
+    fun shouldShowPill(config: PrivacyConfig, isLandscape: Boolean = false): Boolean =
+        config.showKeyboardPill && !(isLandscape && config.hidePillInLandscape)
 
     fun resolveVisualState(
         target: ImeTarget,
@@ -103,15 +104,15 @@ object QuickPillStateMachine {
         hasCriticalFailure: Boolean
     ): String {
         if (!config.isImeManaged(target)) {
-            return "🔴 未受管 · 暂停保护"
+            return "🔴 未接管"
         }
         if (hasCriticalFailure) {
-            return "🔴 关键规则异常，请点开主页检查"
+            return "🔴 规则异常"
         }
         return if (config.effectiveCloudEnabled(target)) {
-            "🟢 受管 · 云输入(已脱敏)"
+            "🟢 云输入"
         } else {
-            "🔒 受管 · 纯本地词库"
+            "🔒 纯本地"
         }
     }
 

@@ -3,10 +3,13 @@ package com.scluzlep.miimeprivacy.xposed.overlay
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.ApplicationInfo
+import android.content.res.Configuration
 import android.graphics.Color
+import android.graphics.Rect
 import android.graphics.Region
 import android.graphics.drawable.GradientDrawable
 import android.inputmethodservice.InputMethodService
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.TypedValue
@@ -46,6 +49,7 @@ object KeyboardQuickPillHook {
     private const val HOOK_FINISH_INPUT_VIEW = "overlay:onFinishInputView"
     private const val HOOK_COMPUTE_INSETS = "overlay:onComputeInsets"
     private const val HOOK_WINDOW_HIDDEN = "overlay:onWindowHidden"
+    private const val HOOK_CONFIGURATION_CHANGED = "overlay:onConfigurationChanged"
     private const val HOOK_DESTROY = "overlay:onDestroy"
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -185,6 +189,40 @@ object KeyboardQuickPillHook {
             chain.proceed()
         }
 
+        val (configMethod, configSource) = resolveImeLifecycleMethod(
+            imeServiceClass,
+            "onConfigurationChanged",
+            Configuration::class.java
+        )
+        val configHooked = registry.hookMethod(
+            ruleId = ruleId,
+            hookId = HOOK_CONFIGURATION_CHANGED,
+            executable = configMethod,
+            source = configSource.name
+        ) { chain ->
+            val result = chain.proceed()
+            val service = chain.thisObject as? InputMethodService
+            if (service != null) {
+                runOnMain {
+                    val cfg = ConfigBridge.current
+                    val overlay = synchronized(overlaysLock) { overlays[service] }
+                    if (overlay != null) {
+                        applyConfigToOverlay(
+                            service = service,
+                            overlay = overlay,
+                            target = target,
+                            config = cfg,
+                            requestRelayoutIfMoved = true
+                        )
+                    }
+                    if (isLandscape(service) && cfg.hidePillInLandscape) {
+                        dismissPanelForService(service)
+                    }
+                }
+            }
+            result
+        }
+
         val (destroyMethod, destroySource) = resolveImeLifecycleMethod(
             imeServiceClass,
             "onDestroy"
@@ -205,9 +243,9 @@ object KeyboardQuickPillHook {
             chain.proceed()
         }
 
-        if (!startHooked || !finishHooked || !insetsHooked) {
+        if (!startHooked || !finishHooked || !insetsHooked || !configHooked) {
             registry.logWarn(
-                "Overlay pill hooks incomplete: start=$startHooked finish=$finishHooked insets=$insetsHooked"
+                "Overlay pill hooks incomplete: start=$startHooked finish=$finishHooked insets=$insetsHooked config=$configHooked"
             )
         } else if (registry.getReport(ruleId)?.status == null) {
             registry.reportRule(
@@ -327,6 +365,9 @@ object KeyboardQuickPillHook {
         attachPillGestureHandler(service, overlay, target)
         pillView.addOnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
             val newWidth = view.width
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && newWidth > 0 && view.height > 0) {
+                view.systemGestureExclusionRects = listOf(Rect(0, 0, newWidth, view.height))
+            }
             if (newWidth > 0 && overlay.lastMeasuredWidth == 0) {
                 overlay.lastMeasuredWidth = newWidth
                 applyPositionToPill(service, overlay, target, ConfigBridge.current)
@@ -390,6 +431,7 @@ object KeyboardQuickPillHook {
 
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    view.parent?.requestDisallowInterceptTouchEvent(true)
                     overlay.downRawX = event.rawX
                     overlay.downRawY = event.rawY
                     overlay.startTransX = view.translationX
@@ -424,8 +466,8 @@ object KeyboardQuickPillHook {
                         overlay.longPressRunnable = null
                     }
                     if (overlay.isDragging) {
-                        val maxX = (overlay.contentFrame.width - view.width).coerceAtLeast(0).toFloat()
-                        val maxY = (overlay.contentFrame.height - view.height).coerceAtLeast(0).toFloat()
+                        val maxX = (effectiveContainerWidthPx(service, overlay) - view.width).coerceAtLeast(0).toFloat()
+                        val maxY = (effectiveContainerHeightPx(service, overlay) - view.height).coerceAtLeast(0).toFloat()
                         view.translationX = (overlay.startTransX + dx).coerceIn(0f, maxX)
                         view.translationY = (overlay.startTransY + dy).coerceIn(0f, maxY)
                     }
@@ -500,10 +542,14 @@ object KeyboardQuickPillHook {
             panelRoot.parent === contentFrame &&
             panelRoot.visibility == View.VISIBLE
 
+        val cfg = ConfigBridge.current
+        val landscape = isLandscape(service)
         if (isPanelVisible) {
-            val decorView = service.window?.window?.decorView
-            val width = contentFrame.width.takeIf { it > 0 } ?: decorView?.width ?: 0
-            val height = contentFrame.height.takeIf { it > 0 } ?: decorView?.height ?: 0
+            if (landscape && cfg.hidePillInLandscape) {
+                mainHandler.post { dismissPanelForService(service) }
+            }
+            val width = effectiveContainerWidthPx(service, overlay)
+            val height = effectiveContainerHeightPx(service, overlay)
             insets.touchableInsets = InputMethodService.Insets.TOUCHABLE_INSETS_REGION
             if (width > 0 && height > 0) {
                 insets.touchableRegion.set(0, 0, width, height)
@@ -511,9 +557,8 @@ object KeyboardQuickPillHook {
             return
         }
 
-        val cfg = ConfigBridge.current
         val hasKeyboardSurface = contentFrame.height <= 0 || insets.visibleTopInsets < contentFrame.height
-        val shouldShow = QuickPillStateMachine.shouldShowPill(cfg) && hasKeyboardSurface
+        val shouldShow = QuickPillStateMachine.shouldShowPill(cfg, landscape) && hasKeyboardSurface
         val desiredVisibility = if (shouldShow) View.VISIBLE else View.GONE
         if (overlay.pillView.visibility != desiredVisibility) {
             overlay.pillView.visibility = desiredVisibility
@@ -532,6 +577,22 @@ object KeyboardQuickPillHook {
             contentFrame.getLocationInWindow(contentLoc)
             val left = (contentLoc[0] + pill.left + pill.translationX).roundToInt()
             val top = (contentLoc[1] + pill.top + pill.translationY).roundToInt()
+            if (insets.touchableInsets != InputMethodService.Insets.TOUCHABLE_INSETS_REGION &&
+                insets.touchableInsets != InputMethodService.Insets.TOUCHABLE_INSETS_FRAME &&
+                top < insets.visibleTopInsets
+            ) {
+                val width = effectiveContainerWidthPx(service, overlay)
+                val height = effectiveContainerHeightPx(service, overlay)
+                if (width > 0 && height > 0) {
+                    insets.touchableRegion.set(
+                        0,
+                        insets.visibleTopInsets.coerceIn(0, height),
+                        width,
+                        height
+                    )
+                    insets.touchableInsets = InputMethodService.Insets.TOUCHABLE_INSETS_REGION
+                }
+            }
             insets.touchableRegion.op(
                 left,
                 top,
@@ -549,7 +610,8 @@ object KeyboardQuickPillHook {
         config: PrivacyConfig,
         requestRelayoutIfMoved: Boolean
     ) {
-        val isVisible = QuickPillStateMachine.shouldShowPill(config)
+        val landscape = isLandscape(service)
+        val isVisible = QuickPillStateMachine.shouldShowPill(config, landscape)
         val targetVis = if (isVisible) View.VISIBLE else View.GONE
         val visChanged = overlay.pillView.visibility != targetVis
         if (visChanged) {
@@ -566,10 +628,14 @@ object KeyboardQuickPillHook {
             posChanged = prevX != overlay.pillView.translationX || prevY != overlay.pillView.translationY
         }
 
-        overlay.panelHandle?.let { handle ->
-            if (handle.rootView.parent === overlay.contentFrame) {
-                val diag = currentDiagnostics(target, config)
-                handle.bind(config, diag, QuickPanelViewFactory.isNightMode(service))
+        if (landscape && config.hidePillInLandscape) {
+            dismissPanelForService(service)
+        } else {
+            overlay.panelHandle?.let { handle ->
+                if (handle.rootView.parent === overlay.contentFrame) {
+                    val diag = currentDiagnostics(target, config)
+                    handle.bind(config, diag, QuickPanelViewFactory.isNightMode(service))
+                }
             }
         }
 
@@ -611,13 +677,29 @@ object KeyboardQuickPillHook {
             offset = config.pillOffsetFor(target),
             visibleTopInsetsPx = overlay.lastVisibleTopInsets,
             density = density,
-            containerWidthPx = overlay.contentFrame.width,
-            containerHeightPx = overlay.contentFrame.height,
+            containerWidthPx = effectiveContainerWidthPx(service, overlay),
+            containerHeightPx = effectiveContainerHeightPx(service, overlay),
             pillWidthPx = overlay.pillView.width,
             pillHeightPx = overlay.pillView.height
         )
         overlay.pillView.translationX = pos.translationX
         overlay.pillView.translationY = pos.translationY
+    }
+
+    private fun isLandscape(service: InputMethodService): Boolean {
+        return service.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    }
+
+    private fun effectiveContainerWidthPx(service: InputMethodService, overlay: ServiceOverlay): Int {
+        return overlay.contentFrame.width.takeIf { it > 0 }
+            ?: service.window?.window?.decorView?.width?.takeIf { it > 0 }
+            ?: service.resources.displayMetrics.widthPixels
+    }
+
+    private fun effectiveContainerHeightPx(service: InputMethodService, overlay: ServiceOverlay): Int {
+        return overlay.contentFrame.height.takeIf { it > 0 }
+            ?: service.window?.window?.decorView?.height?.takeIf { it > 0 }
+            ?: service.resources.displayMetrics.heightPixels
     }
 
     private fun showPanelForService(

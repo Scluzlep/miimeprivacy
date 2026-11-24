@@ -64,6 +64,7 @@ data class PrivacyConfig(
     val blockHttpDns: Boolean = false,
     val blockXiaoAiHotwordTracker: Boolean = false,
     val showKeyboardPill: Boolean = true,
+    val hidePillInLandscape: Boolean = true,
     val pillAlpha: Float = DEFAULT_PILL_ALPHA,
     val sogouPillOffsetXDp: Int = PillOffset.DEFAULT_OFFSET_X_DP,
     val sogouPillOffsetYDp: Int = PillOffset.DEFAULT_OFFSET_Y_DP,
@@ -172,6 +173,7 @@ data class PrivacyConfig(
             put(KEY_BLOCK_HTTP_DNS, clean.blockHttpDns)
             put(KEY_BLOCK_XIAOAI_HOTWORD_TRACKER, clean.blockXiaoAiHotwordTracker)
             put(KEY_SHOW_KEYBOARD_PILL, clean.showKeyboardPill)
+            put(KEY_HIDE_PILL_IN_LANDSCAPE, clean.hidePillInLandscape)
             put(KEY_PILL_ALPHA, clean.pillAlpha.toDouble())
             put(KEY_SOGOU_PILL_OFFSET_X, clean.sogouPillOffsetXDp)
             put(KEY_SOGOU_PILL_OFFSET_Y, clean.sogouPillOffsetYDp)
@@ -214,6 +216,7 @@ data class PrivacyConfig(
         editor.putBoolean(KEY_BLOCK_HTTP_DNS, clean.blockHttpDns)
         editor.putBoolean(KEY_BLOCK_XIAOAI_HOTWORD_TRACKER, clean.blockXiaoAiHotwordTracker)
         editor.putBoolean(KEY_SHOW_KEYBOARD_PILL, clean.showKeyboardPill)
+        editor.putBoolean(KEY_HIDE_PILL_IN_LANDSCAPE, clean.hidePillInLandscape)
         editor.putFloat(KEY_PILL_ALPHA, clean.pillAlpha)
         editor.putInt(KEY_SOGOU_PILL_OFFSET_X, clean.sogouPillOffsetXDp)
         editor.putInt(KEY_SOGOU_PILL_OFFSET_Y, clean.sogouPillOffsetYDp)
@@ -233,10 +236,10 @@ data class PrivacyConfig(
 
     companion object {
         const val DEFAULT_PILL_ALPHA = 0.88f
-        const val MIN_PILL_ALPHA = 0.25f
+        const val MIN_PILL_ALPHA = 0.10f
         const val MAX_PILL_ALPHA = 1.0f
-        const val MIN_PILL_OFFSET_DP = -300
-        const val MAX_PILL_OFFSET_DP = 300
+        const val MIN_PILL_OFFSET_DP = -2000
+        const val MAX_PILL_OFFSET_DP = 2000
 
         const val KEY_SOGOU_MANAGED = "sogouManaged"
         const val KEY_BAIDU_MANAGED = "baiduManaged"
@@ -259,6 +262,7 @@ data class PrivacyConfig(
         const val KEY_BLOCK_HTTP_DNS = "blockHttpDns"
         const val KEY_BLOCK_XIAOAI_HOTWORD_TRACKER = "blockXiaoAiHotwordTracker"
         const val KEY_SHOW_KEYBOARD_PILL = "showKeyboardPill"
+        const val KEY_HIDE_PILL_IN_LANDSCAPE = "hidePillInLandscape"
         const val KEY_PILL_ALPHA = "pillAlpha"
         const val KEY_SOGOU_PILL_OFFSET_X = "sogouPillOffsetXDp"
         const val KEY_SOGOU_PILL_OFFSET_Y = "sogouPillOffsetYDp"
@@ -320,6 +324,7 @@ data class PrivacyConfig(
                 blockHttpDns = obj.optBoolean(KEY_BLOCK_HTTP_DNS, defaults.blockHttpDns),
                 blockXiaoAiHotwordTracker = obj.optBoolean(KEY_BLOCK_XIAOAI_HOTWORD_TRACKER, defaults.blockXiaoAiHotwordTracker),
                 showKeyboardPill = obj.optBoolean(KEY_SHOW_KEYBOARD_PILL, defaults.showKeyboardPill),
+                hidePillInLandscape = obj.optBoolean(KEY_HIDE_PILL_IN_LANDSCAPE, defaults.hidePillInLandscape),
                 pillAlpha = obj.optDouble(KEY_PILL_ALPHA, defaults.pillAlpha.toDouble()).toFloat(),
                 sogouPillOffsetXDp = obj.optInt(KEY_SOGOU_PILL_OFFSET_X, defaults.sogouPillOffsetXDp),
                 sogouPillOffsetYDp = obj.optInt(KEY_SOGOU_PILL_OFFSET_Y, defaults.sogouPillOffsetYDp),
@@ -379,6 +384,7 @@ data class PrivacyConfig(
                 blockHttpDns = prefs.getBoolean(KEY_BLOCK_HTTP_DNS, defaults.blockHttpDns),
                 blockXiaoAiHotwordTracker = prefs.getBoolean(KEY_BLOCK_XIAOAI_HOTWORD_TRACKER, defaults.blockXiaoAiHotwordTracker),
                 showKeyboardPill = prefs.getBoolean(KEY_SHOW_KEYBOARD_PILL, defaults.showKeyboardPill),
+                hidePillInLandscape = prefs.getBoolean(KEY_HIDE_PILL_IN_LANDSCAPE, defaults.hidePillInLandscape),
                 pillAlpha = prefs.getFloat(KEY_PILL_ALPHA, defaults.pillAlpha),
                 sogouPillOffsetXDp = prefs.getInt(KEY_SOGOU_PILL_OFFSET_X, defaults.sogouPillOffsetXDp),
                 sogouPillOffsetYDp = prefs.getInt(KEY_SOGOU_PILL_OFFSET_Y, defaults.sogouPillOffsetYDp),
