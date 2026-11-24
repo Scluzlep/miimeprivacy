@@ -66,7 +66,7 @@ class CloudToggleTileService : TileService() {
     }
 
     companion object {
-        internal const val SUBTITLE_CLOUD_ON = "云输入开(脱敏)"
+        internal const val SUBTITLE_CLOUD_ON = "云输入"
         internal const val SUBTITLE_LOCAL_ONLY = "纯本地"
     }
 }

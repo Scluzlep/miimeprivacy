@@ -261,27 +261,27 @@ fun themeModeLabel(mode: ThemeMode): String = when (mode) {
 }
 
 fun paletteStyleLabel(style: MonetPaletteStyle): String = when (style) {
-    MonetPaletteStyle.TonalSpot -> "色调点"
-    MonetPaletteStyle.Neutral -> "柔和中性"
-    MonetPaletteStyle.Vibrant -> "鲜艳明快"
-    MonetPaletteStyle.Expressive -> "富于表现"
-    MonetPaletteStyle.Rainbow -> "彩虹撞色"
-    MonetPaletteStyle.FruitSalad -> "水果拼盘"
-    MonetPaletteStyle.Monochrome -> "极简黑白"
-    MonetPaletteStyle.Fidelity -> "保真还原"
-    MonetPaletteStyle.Content -> "内容跟随"
+    MonetPaletteStyle.TonalSpot -> "标准"
+    MonetPaletteStyle.Neutral -> "柔和"
+    MonetPaletteStyle.Vibrant -> "鲜艳"
+    MonetPaletteStyle.Expressive -> "灵动"
+    MonetPaletteStyle.Rainbow -> "彩虹"
+    MonetPaletteStyle.FruitSalad -> "撞色"
+    MonetPaletteStyle.Monochrome -> "黑白"
+    MonetPaletteStyle.Fidelity -> "原色"
+    MonetPaletteStyle.Content -> "跟随"
 }
 
 fun paletteStyleDescription(style: MonetPaletteStyle): String = when (style) {
-    MonetPaletteStyle.TonalSpot -> "Android 默认莫奈风格，平衡主色与中性背景"
-    MonetPaletteStyle.Neutral -> "低饱和度灰调衬底，突出信息层级"
-    MonetPaletteStyle.Vibrant -> "提升色度对比，界面重点更鲜明"
-    MonetPaletteStyle.Expressive -> "增强辅助色与容器色变化"
-    MonetPaletteStyle.Rainbow -> "多色相过渡，保持柔和质感"
-    MonetPaletteStyle.FruitSalad -> "互补撞色点缀，强调互动元件"
-    MonetPaletteStyle.Monochrome -> "无彩色阶梯，专注高对比阅读"
-    MonetPaletteStyle.Fidelity -> "紧贴种子原色亮度与彩度"
-    MonetPaletteStyle.Content -> "温和还原提取色彩倾向"
+    MonetPaletteStyle.TonalSpot -> "系统默认配色"
+    MonetPaletteStyle.Neutral -> "低饱和灰调"
+    MonetPaletteStyle.Vibrant -> "高饱和鲜明配色"
+    MonetPaletteStyle.Expressive -> "辅助色对比更强"
+    MonetPaletteStyle.Rainbow -> "多色相柔和过渡"
+    MonetPaletteStyle.FruitSalad -> "互补撞色点缀"
+    MonetPaletteStyle.Monochrome -> "纯黑白灰阶"
+    MonetPaletteStyle.Fidelity -> "贴近壁纸原色"
+    MonetPaletteStyle.Content -> "按壁纸主色微调"
 }
 
 private fun resolveSystemSeedColor(context: Context): Color {

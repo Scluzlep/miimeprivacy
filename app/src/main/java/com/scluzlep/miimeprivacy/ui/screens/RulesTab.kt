@@ -5,10 +5,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -64,7 +62,7 @@ fun RulesTab(
     ) {
         item(key = "telemetry_title") {
             SmallTitle(
-                text = "遥测与日志隔离",
+                text = "遥测与日志",
                 insideMargin = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
             )
         }
@@ -72,29 +70,29 @@ fun RulesTab(
         item(key = "telemetry_card") {
             Card(modifier = Modifier.fillMaxWidth()) {
                 MiSwitchItem(
-                    title = "拦截独立行为遥测",
-                    summary = "阻断 kpi2 / instantpb / OneTrack / 周期打点及未同意隐私放行保活",
+                    title = "拦截行为遥测",
+                    summary = "阻断行为统计、打点上报与后台保活",
                     checked = cfg.blockTelemetry,
                     onCheckedChange = controller::setBlockTelemetry,
                     showDivider = true
                 )
                 MiSwitchItem(
-                    title = "拦截密码框计数",
-                    summary = "阻止密码输入框统计计数与状态位回传（含超级小爱先计数后拦截缺陷）",
+                    title = "拦截密码框统计",
+                    summary = "阻止密码输入框状态统计与次数回传",
                     checked = cfg.blockPasswordStats,
                     onCheckedChange = controller::setBlockPasswordStats,
                     showDivider = true
                 )
                 MiSwitchItem(
-                    title = "拦截远端日志回捞与 TDDiag",
-                    summary = "阻断 mobile_log_salvage 静默捞取、TDDiag 日志打包及远端调试指令",
+                    title = "拦截远端日志提取",
+                    summary = "阻断静默日志打包、上传与远端调试指令",
                     checked = cfg.blockRemoteLogSalvage,
                     onCheckedChange = controller::setBlockRemoteLogSalvage,
                     showDivider = true
                 )
                 MiSwitchItem(
-                    title = "拦截搜狗 MutualData",
-                    summary = "关闭小米版默认开启的搜索词、应用切换与地理坐标 bigdata.db 持久化",
+                    title = "拦截搜狗行为记录",
+                    summary = "关闭搜索词、应用切换与定位记录入库",
                     checked = cfg.blockMutualData,
                     onCheckedChange = controller::setBlockMutualData,
                     showDivider = false
@@ -104,7 +102,7 @@ fun RulesTab(
 
         item(key = "cloud_payload_title") {
             SmallTitle(
-                text = "云输入载荷最小化（开启云输入时生效）",
+                text = "云输入脱敏",
                 insideMargin = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
             )
         }
@@ -112,31 +110,31 @@ fun RulesTab(
         item(key = "cloud_payload_card") {
             Card(modifier = Modifier.fillMaxWidth()) {
                 MiSwitchItem(
-                    title = "启用载荷脱敏",
-                    summary = "剥离聊天上下文 dialogue、位置坐标、IMEI/IMSI 及百度城市定位字段",
+                    title = "云输入脱敏",
+                    summary = "开启云输入时清除设备标识与定位字段",
                     checked = cfg.sanitizeCloudPayload,
                     onCheckedChange = controller::setSanitizeCloudPayload,
                     showDivider = true
                 )
                 MiSwitchItem(
-                    title = "剥离光标前后 100 字上下文",
-                    summary = "仅发送当前拼音串/候选请求，阻止上传编辑框周围聊天记录",
+                    title = "隐藏光标前后文字",
+                    summary = "只发送当前输入，不上传编辑框内已有内容",
                     checked = cfg.stripCursorContext,
                     enabled = cfg.sanitizeCloudPayload,
                     onCheckedChange = controller::setStripCursorContext,
                     showDivider = true
                 )
                 MiSwitchItem(
-                    title = "脱敏宿主包名",
-                    summary = "对云请求与 AI 接口隐藏当前正在输入的前台应用包名",
+                    title = "隐藏当前应用包名",
+                    summary = "不向云端与 AI 接口传递前台应用信息",
                     checked = cfg.maskHostPackage,
                     enabled = cfg.sanitizeCloudPayload,
                     onCheckedChange = controller::setMaskHostPackage,
                     showDivider = true
                 )
                 MiSwitchItem(
-                    title = "剥离触控坐标",
-                    summary = "清除输入击键坐标与轨迹统计字段，仅保留必要候选识别参数",
+                    title = "隐藏按键坐标",
+                    summary = "清除输入击键坐标与滑动轨迹字段",
                     checked = cfg.stripTouchPositions,
                     enabled = cfg.sanitizeCloudPayload,
                     onCheckedChange = controller::setStripTouchPositions,
@@ -147,7 +145,7 @@ fun RulesTab(
 
         item(key = "privacy_strict_title") {
             SmallTitle(
-                text = "隐私权限与严格开关",
+                text = "权限与严格拦截",
                 insideMargin = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
             )
         }
@@ -155,36 +153,36 @@ fun RulesTab(
         item(key = "privacy_strict_card") {
             Card(modifier = Modifier.fillMaxWidth()) {
                 MiSwitchItem(
-                    title = "剪贴板隐私保护",
-                    summary = "保留正常手动粘贴，阻断隐私模式反向采集、后台静默读取与 cpn 计数上报",
+                    title = "剪贴板保护",
+                    summary = "保留正常粘贴，拦截后台静默读取与统计",
                     checked = cfg.clipboardPrivacy,
                     onCheckedChange = controller::setClipboardPrivacy,
                     showDivider = true
                 )
                 MiSwitchItem(
-                    title = "通讯录 / 短信 / 扫包拦截",
-                    summary = "拦截通讯录联系人词汇上传、短信收件箱查询及全量应用列表扫描",
+                    title = "拦截通讯录与扫包",
+                    summary = "禁止读取通讯录、短信记录与已安装应用",
                     checked = cfg.blockContactsAndAppScan,
                     onCheckedChange = controller::setBlockContactsAndAppScan,
                     showDivider = true
                 )
                 MiSwitchItem(
-                    title = "未签名 hj 动态 DEX 拦截",
-                    summary = "阻止仅校验 MD5 的远端任务 DEX、热补丁及动态脚本下载执行",
+                    title = "拦截动态代码加载",
+                    summary = "阻止远端下发并执行未签名脚本或 DEX",
                     checked = cfg.blockUnsignedDynamicDex,
                     onCheckedChange = controller::setBlockUnsignedDynamicDex,
                     showDivider = true
                 )
                 MiSwitchItem(
-                    title = "阻断搜狗 / 百度 HTTPDNS（严格·默认关）",
-                    summary = "阻断 MSDKDnsResolver / httpsdns.baidu.com 绕过系统 DNS 解析",
+                    title = "拦截 HTTPDNS",
+                    summary = "禁止搜狗与百度绕过系统 DNS 解析，默认关闭",
                     checked = cfg.blockHttpDns,
                     onCheckedChange = controller::setBlockHttpDns,
                     showDivider = true
                 )
                 MiSwitchItem(
-                    title = "阻断超级小爱热词纠错跨应用追踪（严格·默认关）",
-                    summary = "拦截 HotwordRemoteClient 向 com.xiaomi.aicr 上报 before_text/final_text",
+                    title = "拦截小爱热词追踪",
+                    summary = "禁止跨应用上报热词纠错前后的文本，默认关闭",
                     checked = cfg.blockXiaoAiHotwordTracker,
                     onCheckedChange = controller::setBlockXiaoAiHotwordTracker,
                     showDivider = false
@@ -194,7 +192,7 @@ fun RulesTab(
 
         item(key = "diag_title") {
             SmallTitle(
-                text = "逐条 Hook 真实命中诊断",
+                text = "规则状态",
                 insideMargin = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
             )
         }
@@ -225,36 +223,38 @@ private fun HookRuleDiagnosticCard(item: RuleDisplayItem) {
     val status = item.effectiveStatus
 
     val (badgeLabel, badgeBg, badgeFg, dotColor) = when (status) {
-        HookMatchStatus.ACTIVE -> {
-            val sourceTag = formatActiveSource(report?.source.orEmpty())
-            Quad("ACTIVE$sourceTag", statusColors.okContainer, statusColors.onOkContainer, statusColors.ok)
-        }
+        HookMatchStatus.ACTIVE -> Quad(
+            "正常",
+            statusColors.okContainer,
+            statusColors.onOkContainer,
+            statusColors.ok
+        )
         HookMatchStatus.FALLBACK -> Quad(
-            "FALLBACK 结构兜底",
+            "兜底命中",
             statusColors.infoContainer,
             statusColors.onInfoContainer,
             statusColors.info
         )
         HookMatchStatus.DEGRADED -> Quad(
-            "DEGRADED 部分降级",
+            "部分降级",
             statusColors.warningContainer,
             statusColors.onWarningContainer,
             statusColors.warning
         )
         HookMatchStatus.FAILED -> Quad(
-            if (item.spec.critical) "FAILED 关键未匹配" else "FAILED 未匹配告警",
+            "未命中",
             statusColors.errorContainer,
             statusColors.onErrorContainer,
             statusColors.error
         )
         HookMatchStatus.SKIPPED -> Quad(
-            "SKIPPED 已跳过",
+            "已跳过",
             statusColors.neutralContainer,
             statusColors.onNeutralContainer,
             statusColors.neutral
         )
         HookMatchStatus.PENDING -> Quad(
-            "PENDING 等待激活",
+            "待激活",
             statusColors.neutralContainer,
             statusColors.onNeutralContainer,
             statusColors.neutral
@@ -340,13 +340,13 @@ private fun HookRuleDiagnosticCard(item: RuleDisplayItem) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "规则 ID: ${item.spec.ruleId}",
+                            text = "ID: ${item.spec.ruleId}",
                             style = MiuixTheme.textStyles.footnote2,
                             fontFamily = FontFamily.Monospace,
                             color = colors.onSurfaceVariantSummary
                         )
                         Text(
-                            text = "累计拦截：$blockedCount 次",
+                            text = "拦截 $blockedCount 次",
                             style = MiuixTheme.textStyles.footnote1,
                             fontWeight = FontWeight.SemiBold,
                             color = if (blockedCount > 0L) colors.primary else colors.onSurfaceVariantSummary
@@ -354,7 +354,7 @@ private fun HookRuleDiagnosticCard(item: RuleDisplayItem) {
                     }
                     if (matchedMethod != null) {
                         Text(
-                            text = "命中签名：$matchedMethod",
+                            text = "方法：$matchedMethod",
                             style = MiuixTheme.textStyles.footnote2,
                             fontFamily = FontFamily.Monospace,
                             color = colors.onSurfaceContainer
@@ -362,7 +362,7 @@ private fun HookRuleDiagnosticCard(item: RuleDisplayItem) {
                     }
                     if (detail != null) {
                         Text(
-                            text = "说明：$detail",
+                            text = "详情：$detail",
                             style = MiuixTheme.textStyles.footnote2,
                             color = if (status == HookMatchStatus.FAILED || status == HookMatchStatus.DEGRADED) {
                                 statusColors.error
@@ -373,9 +373,9 @@ private fun HookRuleDiagnosticCard(item: RuleDisplayItem) {
                     } else if (report == null) {
                         Text(
                             text = if (item.switchEnabled) {
-                                "等待目标输入法进程上报 Hook 命中结果"
+                                "等待输入法启动后上报"
                             } else {
-                                "对应开关未启用或目标已停用接管"
+                                "规则未开启"
                             },
                             style = MiuixTheme.textStyles.footnote2,
                             color = colors.onSurfaceVariantSummary
@@ -384,16 +384,6 @@ private fun HookRuleDiagnosticCard(item: RuleDisplayItem) {
                 }
             }
         }
-    }
-}
-
-private fun formatActiveSource(source: String): String {
-    if (source.isBlank()) return ""
-    return when {
-        source == "FAST_PATH" -> " FastPath"
-        source == "DEXKIT" -> " DEXKIT"
-        source == "CACHE" -> " 缓存"
-        else -> " $source"
     }
 }
 

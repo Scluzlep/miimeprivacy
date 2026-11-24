@@ -120,4 +120,42 @@ object MiImeIcons {
             }
         }.build()
     }
+
+    val EmojiFace: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "EmojiFace",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f
+        ).apply {
+            path(
+                fill = SolidColor(Color.Black),
+                pathFillType = PathFillType.EvenOdd
+            ) {
+                // Outer circle (center 12,12 radius 10)
+                moveTo(12f, 2f)
+                arcTo(10f, 10f, 0f, true, true, 12f, 22f)
+                arcTo(10f, 10f, 0f, true, true, 12f, 2f)
+                close()
+                // Left eye (center 8.5, 9.5 radius 1.5)
+                moveTo(7f, 9.5f)
+                arcTo(1.5f, 1.5f, 0f, true, true, 10f, 9.5f)
+                arcTo(1.5f, 1.5f, 0f, true, true, 7f, 9.5f)
+                close()
+                // Right eye (center 15.5, 9.5 radius 1.5)
+                moveTo(14f, 9.5f)
+                arcTo(1.5f, 1.5f, 0f, true, true, 17f, 9.5f)
+                arcTo(1.5f, 1.5f, 0f, true, true, 14f, 9.5f)
+                close()
+                // Rounded smile arc cutout
+                moveTo(7.15f, 14.80f)
+                arcTo(5.6f, 5.6f, 0f, false, false, 16.85f, 14.80f)
+                arcTo(0.8f, 0.8f, 0f, false, false, 15.46f, 14.00f)
+                arcTo(4.0f, 4.0f, 0f, false, true, 8.54f, 14.00f)
+                arcTo(0.8f, 0.8f, 0f, false, false, 7.15f, 14.80f)
+                close()
+            }
+        }.build()
+    }
 }

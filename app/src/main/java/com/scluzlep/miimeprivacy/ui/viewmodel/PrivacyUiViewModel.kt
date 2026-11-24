@@ -23,9 +23,9 @@ import kotlinx.coroutines.flow.asStateFlow
 
 enum class MainTab(val title: String) {
     OVERVIEW("总览"),
-    RULES("净化"),
-    OVERLAY("挂件"),
-    SETTINGS("外观")
+    RULES("规则"),
+    OVERLAY("胶囊"),
+    SETTINGS("设置")
 }
 
 enum class RuleTargetFilter(val label: String, val target: ImeTarget?) {
@@ -94,8 +94,8 @@ data class ImeHealthSummary(
 )
 
 enum class PillVisualState(val emoji: String, val label: String) {
-    CLOUD_MANAGED("🟢", "受管云输入"),
-    LOCAL_MANAGED("🔒", "受管纯本地"),
+    CLOUD_MANAGED("🟢", "云输入"),
+    LOCAL_MANAGED("🔒", "纯本地"),
     UNMANAGED_OR_ALERT("🔴", "未接管")
 }
 
@@ -168,17 +168,13 @@ object PrivacyUiStateBuilder {
 
         if (diagnostics == null) {
             val headline = when {
-                !installedInfo.installed -> "目标输入法未安装"
-                !managed -> "已停用隐私接管（仅保留状态查看）"
-                !isInScope -> "尚未加入 LSPosed 作用域"
-                else -> "等待输入法拉起后上报（${catalogRules.size} 条待检）"
+                !installedInfo.installed -> "未安装"
+                !managed -> "已暂停接管"
+                !isInScope -> "未加入作用域"
+                else -> "等待启动 · 共 ${catalogRules.size} 项"
             }
             return ImeHealthSummary(
-                severity = if (!managed || !installedInfo.installed || !isInScope) {
-                    RuleHealthSeverity.NEUTRAL
-                } else {
-                    RuleHealthSeverity.NEUTRAL
-                },
+                severity = RuleHealthSeverity.NEUTRAL,
                 headline = headline,
                 pendingCount = catalogRules.size,
                 versionMismatch = versionMismatch
@@ -218,28 +214,27 @@ object PrivacyUiStateBuilder {
         val (severity, headline) = when {
             criticalFailedCount > 0 -> {
                 RuleHealthSeverity.CRITICAL_ERROR to
-                    "关键 Hook 未匹配（$criticalFailedCount 项关键失败 · $activeCount/$applicableCount 正常）"
+                    "${criticalFailedCount} 项关键规则未命中 · $activeCount/$applicableCount 正常"
             }
             failedCount > 0 || degradedCount > 0 -> {
                 val issueCount = failedCount + degradedCount
                 RuleHealthSeverity.WARNING to
-                    "部分 Hook 降级或未匹配（$activeCount/$applicableCount 正常 · $issueCount 项异常）"
+                    "$issueCount 项规则异常 · $activeCount/$applicableCount 正常"
             }
             applicableCount > 0 && activeCount == applicableCount -> {
                 if (fallbackCount > 0) {
                     RuleHealthSeverity.FALLBACK_OK to
-                        "$activeCount/$applicableCount 正常（含 $fallbackCount 项结构兜底）"
+                        "$activeCount/$applicableCount 正常 · $fallbackCount 项兜底"
                 } else {
-                    val skippedSuffix = if (skippedCount > 0) " · $skippedCount 项未启用" else ""
-                    RuleHealthSeverity.HEALTHY to "$activeCount/$applicableCount 正常$skippedSuffix"
+                    RuleHealthSeverity.HEALTHY to "$activeCount/$applicableCount 正常"
                 }
             }
             !managed -> {
-                RuleHealthSeverity.NEUTRAL to "已停用接管（$skippedCount 项已跳过）"
+                RuleHealthSeverity.NEUTRAL to "已暂停接管 · $skippedCount 项已跳过"
             }
             else -> {
                 RuleHealthSeverity.NEUTRAL to
-                    "待激活（$activeCount 已就绪 / $pendingCount 待检 / $skippedCount 跳过）"
+                    "待激活 · $activeCount 正常 · $pendingCount 待检"
             }
         }
 
@@ -411,7 +406,7 @@ class PrivacyUiController(context: Context) {
     fun requestScopeForAll() {
         if (_isScopeRequesting.value) return
         _isScopeRequesting.value = true
-        _actionFeedback.value = "正在向框架申请 3 款输入法作用域…"
+        _actionFeedback.value = "正在申请作用域…"
         XposedServiceManager.requestScopeForAll { _, message ->
             _isScopeRequesting.value = false
             _actionFeedback.value = message
@@ -421,7 +416,7 @@ class PrivacyUiController(context: Context) {
     fun hotReloadAll() {
         if (_isHotReloading.value) return
         _isHotReloading.value = true
-        _actionFeedback.value = "正在热重载运行中的输入法进程…"
+        _actionFeedback.value = "正在热重载模块…"
         XposedServiceManager.hotReloadAll { message ->
             _isHotReloading.value = false
             _actionFeedback.value = message
@@ -504,7 +499,7 @@ class PrivacyUiController(context: Context) {
         XposedServiceManager.updateConfig {
             it.withPillOffset(target, PillOffset.DEFAULT_OFFSET_X_DP, PillOffset.DEFAULT_OFFSET_Y_DP)
         }
-        _actionFeedback.value = "已重置 ${target.displayName} 挂件偏移为 (12dp, 2dp)"
+        _actionFeedback.value = "已重置 ${target.displayName} 胶囊位置"
     }
 
     fun resetAllPillOffsets() {
@@ -515,7 +510,7 @@ class PrivacyUiController(context: Context) {
             }
             next
         }
-        _actionFeedback.value = "已重置全部 3 款输入法的挂件偏移为 (12dp, 2dp)"
+        _actionFeedback.value = "已重置全部输入法胶囊位置"
     }
 
     fun setThemeMode(mode: ThemeMode) {

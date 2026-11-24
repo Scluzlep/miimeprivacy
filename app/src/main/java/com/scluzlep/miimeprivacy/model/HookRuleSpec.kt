@@ -59,8 +59,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_SOGOU_PRIVACY_GATE,
             target = ImeTarget.SOGOU,
-            title = "隐私门控与 Alive 绕过拦截",
-            description = "拦截未同意隐私放行保活、special_alive/enforce_send 及 C0532d 越权 Cookie 注入",
+            title = "隐私同意门控",
+            description = "未同意隐私政策前禁止保活与后台发包",
             category = RuleCategory.TELEMETRY,
             critical = true,
             configSwitchKey = PrivacyConfig.KEY_BLOCK_TELEMETRY
@@ -68,8 +68,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_SOGOU_TELEMETRY,
             target = ImeTarget.SOGOU,
-            title = "遥测打点与日志上报净化",
-            description = "阻断 kpi2/instantpb/BigData/WhiteDog/Bugly/RMonitor 与 TDDiag 日志打包",
+            title = "遥测与日志拦截",
+            description = "阻断行为打点、崩溃日志与诊断上报",
             category = RuleCategory.TELEMETRY,
             critical = false,
             configSwitchKey = PrivacyConfig.KEY_BLOCK_TELEMETRY
@@ -77,8 +77,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_SOGOU_CLOUD_SANITIZE,
             target = ImeTarget.SOGOU,
-            title = "云输入 WSS 脱敏与纯本地切换",
-            description = "剥离前后 100 字上下文、QQ/微信对话缓存、触控坐标与宿主包名，支持纯本地直断",
+            title = "云输入请求脱敏",
+            description = "清除上下文、对话缓存、坐标与宿主包名",
             category = RuleCategory.CLOUD_PRIVACY,
             critical = true,
             configSwitchKey = PrivacyConfig.KEY_SANITIZE_CLOUD_PAYLOAD
@@ -86,8 +86,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_SOGOU_MUTUAL_DATA,
             target = ImeTarget.SOGOU,
-            title = "MutualData 行为入库拦截",
-            description = "关闭小米版默认开启的搜索词、应用切换与地理坐标 bigdata.db 持久化",
+            title = "行为数据入库拦截",
+            description = "禁止记录搜索词、应用切换与定位信息",
             category = RuleCategory.CONTEXT_STRIP,
             critical = false,
             configSwitchKey = PrivacyConfig.KEY_BLOCK_MUTUAL_DATA
@@ -95,8 +95,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_SOGOU_CLIPBOARD,
             target = ImeTarget.SOGOU,
-            title = "剪贴板后台监听隔离",
-            description = "隔离非用户主动触发的剪贴板读取、口令识别与反馈附带行为",
+            title = "剪贴板读取拦截",
+            description = "拦截非手动粘贴时的后台剪贴板读取",
             category = RuleCategory.CLIPBOARD,
             critical = false,
             configSwitchKey = PrivacyConfig.KEY_CLIPBOARD_PRIVACY
@@ -104,8 +104,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_SOGOU_CONTACTS_APP_SCAN,
             target = ImeTarget.SOGOU,
-            title = "通讯录上传与应用列表扫描阻断",
-            description = "拦截隐藏开关控制的 15 天通讯录上传与 getInstalledPackages 全量扫包",
+            title = "通讯录与扫包拦截",
+            description = "禁止上传通讯录并拦截读取已安装应用",
             category = RuleCategory.SCAN_AND_DCL,
             critical = false,
             configSwitchKey = PrivacyConfig.KEY_BLOCK_CONTACTS_AND_APP_SCAN
@@ -113,8 +113,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_SOGOU_DYNAMIC_DEX,
             target = ImeTarget.SOGOU,
-            title = "未签名动态 DEX 与任务加载阻断",
-            description = "拦截仅 MD5 校验的 hj 远端任务 DEX 与动态插件加载",
+            title = "未签名动态加载拦截",
+            description = "阻止下载并加载远端未签名动态代码",
             category = RuleCategory.SCAN_AND_DCL,
             critical = false,
             configSwitchKey = PrivacyConfig.KEY_BLOCK_UNSIGNED_DYNAMIC_DEX
@@ -122,8 +122,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_SOGOU_HTTPDNS,
             target = ImeTarget.SOGOU,
-            title = "HTTPDNS 直连旁路阻断 (严格)",
-            description = "阻断 MSDKDnsResolver (119.29.29.98) 绕过系统 DNS 的解析初始化",
+            title = "HTTPDNS 拦截",
+            description = "禁止绕过系统 DNS 进行直连域名解析",
             category = RuleCategory.STRICT,
             critical = false,
             configSwitchKey = PrivacyConfig.KEY_BLOCK_HTTP_DNS
@@ -131,8 +131,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_SOGOU_OVERLAY_PILL,
             target = ImeTarget.SOGOU,
-            title = "键盘顶栏云输入快捷胶囊",
-            description = "在键盘视图顶部悬浮微透明胶囊，支持一键切换纯本地/云输入模式",
+            title = "键盘悬浮胶囊",
+            description = "在键盘角落显示状态胶囊并支持快捷切换",
             category = RuleCategory.OVERLAY,
             critical = false,
             configSwitchKey = PrivacyConfig.KEY_SHOW_KEYBOARD_PILL
@@ -142,8 +142,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_BAIDU_PRIVACY_GATE,
             target = ImeTarget.BAIDU,
-            title = "隐私标志反转修复与门控加固",
-            description = "修复 dj0.l.I1 标志位反转及 tn0.e/UBCHelper/1839 默认同意绕过",
+            title = "隐私门控修复",
+            description = "修复隐私标志反转并阻断默认同意绕过",
             category = RuleCategory.TELEMETRY,
             critical = true,
             configSwitchKey = PrivacyConfig.KEY_BLOCK_TELEMETRY
@@ -151,8 +151,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_BAIDU_TELEMETRY,
             target = ImeTarget.BAIDU,
-            title = "周期上报与明文统计阻断",
-            description = "拦截 sj0/a case 14 周期回传、http://r.bd.sec.miui.com 明文上报及断网补报",
+            title = "周期统计上报拦截",
+            description = "阻断周期行为回传、明文统计与断网补报",
             category = RuleCategory.TELEMETRY,
             critical = false,
             configSwitchKey = PrivacyConfig.KEY_BLOCK_TELEMETRY
@@ -160,8 +160,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_BAIDU_CLOUD_AND_AI,
             target = ImeTarget.BAIDU,
-            title = "云输入 / VoiceTrace / AI 上下文脱敏",
-            description = "脱敏 CloudInfo/libiptcore、VoiceTrace 前后文及文心 210 字对话上传，支持纯本地直断",
+            title = "云输入与 AI 脱敏",
+            description = "清除云联想、语音与 AI 请求的上下文",
             category = RuleCategory.CLOUD_PRIVACY,
             critical = true,
             configSwitchKey = PrivacyConfig.KEY_SANITIZE_CLOUD_PAYLOAD
@@ -169,8 +169,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_BAIDU_CLIPBOARD,
             target = ImeTarget.BAIDU,
-            title = "隐私模式剪贴板落盘隔离",
-            description = "修正 MIUI 隐私输入态反向采集缺陷，阻断 clipborad_records.db 静默落盘",
+            title = "剪贴板记录拦截",
+            description = "修复隐私模式异常并禁止静默写入数据库",
             category = RuleCategory.CLIPBOARD,
             critical = false,
             configSwitchKey = PrivacyConfig.KEY_CLIPBOARD_PRIVACY
@@ -178,8 +178,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_BAIDU_CONTACTS_SMS_SCAN,
             target = ImeTarget.BAIDU,
-            title = "通讯录/短信读取与桌面应用扫描阻断",
-            description = "拦截短信收件箱查询、通讯录词汇上传与全量应用包名扫描",
+            title = "通讯录短信扫包拦截",
+            description = "禁止读取通讯录、短信及已安装应用列表",
             category = RuleCategory.SCAN_AND_DCL,
             critical = false,
             configSwitchKey = PrivacyConfig.KEY_BLOCK_CONTACTS_AND_APP_SCAN
@@ -187,8 +187,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_BAIDU_SALVAGE_DCL,
             target = ImeTarget.BAIDU,
-            title = "远端日志回捞与动态脚本/DEX 阻断",
-            description = "阻断 mobile_log_salvage 静默日志回捞与远端插件/QuickJS 动态执行",
+            title = "日志回捞与脚本拦截",
+            description = "阻断静默日志提取与远端插件脚本执行",
             category = RuleCategory.SCAN_AND_DCL,
             critical = false,
             configSwitchKey = PrivacyConfig.KEY_BLOCK_REMOTE_LOG_SALVAGE
@@ -196,8 +196,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_BAIDU_HTTPDNS,
             target = ImeTarget.BAIDU,
-            title = "百度 HTTPDNS 旁路阻断 (严格)",
-            description = "阻断 httpsdns.baidu.com 与 180.76.76.112 直连域名解析",
+            title = "HTTPDNS 拦截",
+            description = "禁止绕过系统 DNS 直连百度解析服务",
             category = RuleCategory.STRICT,
             critical = false,
             configSwitchKey = PrivacyConfig.KEY_BLOCK_HTTP_DNS
@@ -205,8 +205,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_BAIDU_OVERLAY_PILL,
             target = ImeTarget.BAIDU,
-            title = "键盘顶栏云输入快捷胶囊",
-            description = "在键盘视图顶部悬浮微透明胶囊，支持一键切换纯本地/云输入模式",
+            title = "键盘悬浮胶囊",
+            description = "在键盘角落显示状态胶囊并支持快捷切换",
             category = RuleCategory.OVERLAY,
             critical = false,
             configSwitchKey = PrivacyConfig.KEY_SHOW_KEYBOARD_PILL
@@ -216,8 +216,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_XIAOAI_CTA_GATE,
             target = ImeTarget.XIAOAI,
-            title = "CTA Fail-Open 与降级门控修复",
-            description = "阻止 CtaConsentActivity 异常或取消时自动置为已同意并开启词库同步",
+            title = "隐私授权异常修复",
+            description = "阻止授权页异常或取消时自动开启同步",
             category = RuleCategory.TELEMETRY,
             critical = true,
             configSwitchKey = PrivacyConfig.KEY_BLOCK_TELEMETRY
@@ -225,8 +225,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_XIAOAI_ONETRACK,
             target = ImeTarget.XIAOAI,
-            title = "OneTrack 绕过与密码框零计数净化",
-            description = "修复 v7.f 忽略改进计划开关、密码框先计数后拦截及系统分析 IPC 旁路",
+            title = "统计与密码框拦截",
+            description = "关闭行为统计并禁止密码输入框先计后拦",
             category = RuleCategory.TELEMETRY,
             critical = true,
             configSwitchKey = PrivacyConfig.KEY_BLOCK_PASSWORD_STATS
@@ -234,8 +234,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_XIAOAI_AI_CLOUD_IPC,
             target = ImeTarget.XIAOAI,
-            title = "AI 表达/截屏 IPC 与云端辅助脱敏",
-            description = "管控 com.miui.voiceassist 截屏转发与 com.xiaomi.aiservice/speech 云端请求",
+            title = "AI 与云端请求脱敏",
+            description = "管控截屏转发并清理语音与 AI 云端请求",
             category = RuleCategory.CLOUD_PRIVACY,
             critical = false,
             configSwitchKey = PrivacyConfig.KEY_SANITIZE_CLOUD_PAYLOAD
@@ -243,8 +243,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_XIAOAI_CLIPBOARD,
             target = ImeTarget.XIAOAI,
-            title = "后台特权剪贴板静默读取门控",
-            description = "管控 READ_CLIPBOARD_IN_BACKGROUND 与无感通知抑制下的后台读取",
+            title = "后台剪贴板拦截",
+            description = "拦截后台静默读取剪贴板内容",
             category = RuleCategory.CLIPBOARD,
             critical = false,
             configSwitchKey = PrivacyConfig.KEY_CLIPBOARD_PRIVACY
@@ -252,8 +252,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_XIAOAI_HOTWORD_TRACKER,
             target = ImeTarget.XIAOAI,
-            title = "跨应用热词纠错文本追踪拦截 (严格)",
-            description = "阻断 HotwordRemoteClient 向 com.xiaomi.aicr 发送 before_text/final_text",
+            title = "热词纠错追踪拦截",
+            description = "禁止向系统服务上报纠错前后的输入文本",
             category = RuleCategory.STRICT,
             critical = false,
             configSwitchKey = PrivacyConfig.KEY_BLOCK_XIAOAI_HOTWORD_TRACKER
@@ -261,8 +261,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_XIAOAI_OVERLAY_PILL,
             target = ImeTarget.XIAOAI,
-            title = "键盘顶栏云输入快捷胶囊",
-            description = "在键盘视图顶部悬浮微透明胶囊，支持一键切换纯本地/云输入模式",
+            title = "键盘悬浮胶囊",
+            description = "在键盘角落显示状态胶囊并支持快捷切换",
             category = RuleCategory.OVERLAY,
             critical = false,
             configSwitchKey = PrivacyConfig.KEY_SHOW_KEYBOARD_PILL

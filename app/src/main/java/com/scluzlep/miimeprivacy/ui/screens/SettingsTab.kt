@@ -8,10 +8,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -22,12 +20,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.scluzlep.miimeprivacy.BuildConfig
-import com.scluzlep.miimeprivacy.config.ConfigContract
 import com.scluzlep.miimeprivacy.config.MonetPaletteStyle
 import com.scluzlep.miimeprivacy.config.ThemeMode
 import com.scluzlep.miimeprivacy.ui.theme.MiInnerShape
@@ -46,6 +44,8 @@ import top.yukonga.miuix.kmp.basic.Surface
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
+private const val GITHUB_REPO_URL = "https://github.com/Scluzlep/miimeprivacy"
+
 @Composable
 fun SettingsTab(
     state: PrivacyUiState,
@@ -54,9 +54,20 @@ fun SettingsTab(
     controller: PrivacyUiController
 ) {
     val cfg = state.config
+    val svc = state.serviceState
     val colors = MiuixTheme.colorScheme
     val statusColors = MiThemeExtras.statusColors
     val supportsSystemMonet = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    val uriHandler = LocalUriHandler.current
+
+    val lsposedVersionText = if (svc.isServiceBound) {
+        val fwName = svc.frameworkName.ifBlank { "LSPosed" }
+        val fwVer = svc.frameworkVersion.trim()
+        val base = if (fwVer.isNotBlank()) "$fwName $fwVer" else fwName
+        if (svc.apiVersion > 0) "$base (API ${svc.apiVersion})" else base
+    } else {
+        "未连接"
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -72,7 +83,7 @@ fun SettingsTab(
     ) {
         item(key = "theme_title") {
             SmallTitle(
-                text = "外观与莫奈动态取色",
+                text = "外观",
                 insideMargin = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
             )
         }
@@ -106,11 +117,11 @@ fun SettingsTab(
                 )
 
                 MiSwitchItem(
-                    title = "莫奈动态取色 (Android 12+)",
+                    title = "莫奈取色",
                     summary = if (supportsSystemMonet) {
-                        "开启后随系统壁纸动态生成 Miuix & Material3 配色方案"
+                        "随系统壁纸自动取色"
                     } else {
-                        "当前系统低于 Android 12，将使用 Miuix 动态种子回退配色"
+                        "系统低于 Android 12，使用默认取色"
                     },
                     checked = cfg.monetEnabled,
                     onCheckedChange = controller::setMonetEnabled,
@@ -129,7 +140,7 @@ fun SettingsTab(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "调色板风格 (MonetPaletteStyle)",
+                            text = "配色风格",
                             style = MiuixTheme.textStyles.body1,
                             fontWeight = FontWeight.Medium,
                             color = colors.onSurfaceContainer
@@ -143,7 +154,7 @@ fun SettingsTab(
 
                     if (!cfg.monetEnabled) {
                         Text(
-                            text = "当前已关闭莫奈取色，界面固定使用 HyperOS #007DFF 经典蓝主题；开启莫奈后以下风格立即生效。",
+                            text = "已关闭莫奈取色，当前使用默认蓝主题，开启后生效",
                             style = MiuixTheme.textStyles.footnote1,
                             color = colors.onSurfaceVariantSummary
                         )
@@ -200,7 +211,6 @@ fun SettingsTab(
                         }
                     }
 
-                    // Live color swatch bar
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         shape = MiInnerShape,
@@ -211,7 +221,7 @@ fun SettingsTab(
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Text(
-                                text = "当前配色实时预览：${paletteStyleDescription(cfg.paletteStyle)}",
+                                text = "配色预览 · ${paletteStyleDescription(cfg.paletteStyle)}",
                                 style = MiuixTheme.textStyles.footnote1,
                                 color = colors.onSurfaceVariantSummary
                             )
@@ -222,9 +232,9 @@ fun SettingsTab(
                             ) {
                                 ColorSwatchItem("主色", colors.primary)
                                 ColorSwatchItem("主容器", colors.primaryContainer)
-                                ColorSwatchItem("次色", colors.secondary)
-                                ColorSwatchItem("第三容器", colors.tertiaryContainer)
-                                ColorSwatchItem("卡片底", colors.surfaceContainerHigh)
+                                ColorSwatchItem("辅色", colors.secondary)
+                                ColorSwatchItem("强调色", colors.tertiaryContainer)
+                                ColorSwatchItem("卡片", colors.surfaceContainerHigh)
                             }
                         }
                     }
@@ -234,7 +244,7 @@ fun SettingsTab(
 
         item(key = "about_title") {
             SmallTitle(
-                text = "关于与安全边界",
+                text = "关于",
                 insideMargin = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
             )
         }
@@ -242,8 +252,8 @@ fun SettingsTab(
         item(key = "about_card") {
             Card(modifier = Modifier.fillMaxWidth()) {
                 BasicComponent(
-                    title = "米输净盾 (MiImePrivacy)",
-                    summary = "包名 ${ConfigContract.MODULE_PACKAGE} · 版本 ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
+                    title = "软件名称",
+                    summary = "米输净盾"
                 )
                 HorizontalDivider(
                     modifier = Modifier.padding(horizontal = 16.dp),
@@ -251,8 +261,8 @@ fun SettingsTab(
                     color = colors.dividerLine
                 )
                 BasicComponent(
-                    title = "Xposed 与签名校验规范",
-                    summary = "基于 libxposed API 102（staticScope + autoHotReload + RemotePreferences），发布构建经 android-sig PKCS#12 签名与 SHA256SUMS 校验"
+                    title = "软件版本",
+                    summary = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
                 )
                 HorizontalDivider(
                     modifier = Modifier.padding(horizontal = 16.dp),
@@ -260,8 +270,8 @@ fun SettingsTab(
                     color = colors.dividerLine
                 )
                 BasicComponent(
-                    title = "已审计目标输入法基准版本",
-                    summary = "搜狗输入法小米版 20160 · 百度输入法小米版 7108 · 超级小爱输入法 21363（版本变化时通过 DexKit 缓存与结构锚点自适应匹配）"
+                    title = "模块开发者",
+                    summary = "Scluzlep"
                 )
                 HorizontalDivider(
                     modifier = Modifier.padding(horizontal = 16.dp),
@@ -269,8 +279,20 @@ fun SettingsTab(
                     color = colors.dividerLine
                 )
                 BasicComponent(
-                    title = "透明与克制原则",
-                    summary = "不破解任何付费特权或会员状态、不读取或导出明文密钥；任意关键 Hook 未匹配时诚实降级并在面板醒目告警"
+                    title = "GitHub",
+                    summary = GITHUB_REPO_URL,
+                    onClick = {
+                        runCatching { uriHandler.openUri(GITHUB_REPO_URL) }
+                    }
+                )
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    thickness = 0.5.dp,
+                    color = colors.dividerLine
+                )
+                BasicComponent(
+                    title = "LSPosed 版本",
+                    summary = lsposedVersionText
                 )
             }
         }

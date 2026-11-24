@@ -125,10 +125,10 @@ class MainActivity : ComponentActivity() {
                         SmallTopAppBar(
                             title = "米输净盾",
                             subtitle = when (selectedTab) {
-                                MainTab.OVERVIEW -> "输入法隐私净化控制中心"
-                                MainTab.RULES -> "净化规则与 Hook 真实命中诊断"
-                                MainTab.OVERLAY -> "键盘角落微胶囊与控制中心磁贴"
-                                MainTab.SETTINGS -> "Miuix 外观、莫奈取色与安全原则"
+                                MainTab.OVERVIEW -> "运行状态"
+                                MainTab.RULES -> "拦截规则"
+                                MainTab.OVERLAY -> "悬浮胶囊"
+                                MainTab.SETTINGS -> "外观与关于"
                             },
                             scrollBehavior = scrollBehavior,
                             actions = {
@@ -137,7 +137,7 @@ class MainActivity : ComponentActivity() {
                                 ) {
                                     Icon(
                                         imageVector = Icons.Rounded.Refresh,
-                                        contentDescription = "刷新状态",
+                                        contentDescription = "刷新",
                                         modifier = Modifier.size(20.dp),
                                         tint = colors.onSurface
                                     )
