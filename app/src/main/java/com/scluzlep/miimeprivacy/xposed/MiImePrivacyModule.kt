@@ -7,6 +7,8 @@ import android.content.pm.ApplicationInfo
 import android.os.Build
 import android.util.Log
 import com.scluzlep.miimeprivacy.config.PrivacyConfig
+import com.scluzlep.miimeprivacy.emoji.ImeEmojiRuntimeBridge
+import com.scluzlep.miimeprivacy.emoji.SogouDualSkinPopupHook
 import com.scluzlep.miimeprivacy.model.HookRuleCatalog
 import com.scluzlep.miimeprivacy.model.ImeTarget
 import com.scluzlep.miimeprivacy.xposed.overlay.KeyboardQuickPillHook
@@ -79,6 +81,7 @@ class MiImePrivacyModule : XposedModule() {
             val ctx = existingApp.applicationContext ?: existingApp
             ConfigBridge.attachContext(ctx)
             registry.attachContext(ctx)
+            ImeEmojiRuntimeBridge.attachIfMainProcess(target, ctx, registry.processName)
             installTargetPacksIfManaged(target, ctx, param.classLoader, param.applicationInfo, registry)
             return
         }
@@ -109,6 +112,7 @@ class MiImePrivacyModule : XposedModule() {
                     (chain.thisObject as? Application)?.applicationContext?.let { appCtx ->
                         ConfigBridge.attachContext(appCtx)
                         registry.attachContext(appCtx)
+                        ImeEmojiRuntimeBridge.attachIfMainProcess(target, appCtx, registry.processName)
                     }
                     result
                 }
@@ -128,6 +132,7 @@ class MiImePrivacyModule : XposedModule() {
                     if (appCtx != null) {
                         ConfigBridge.attachContext(appCtx)
                         registry.attachContext(appCtx)
+                        ImeEmojiRuntimeBridge.attachIfMainProcess(target, appCtx, registry.processName)
                         installTargetPacksIfManaged(
                             target = target,
                             context = appCtx,
@@ -147,6 +152,8 @@ class MiImePrivacyModule : XposedModule() {
         configListener = null
         ConfigBridge.detach()
         KeyboardQuickPillHook.clearOnHotReload()
+        SogouDualSkinPopupHook.clearOnHotReload()
+        ImeEmojiRuntimeBridge.detachOnHotReload()
         param.setSavedInstanceState(currentTarget?.packageName)
         log(Log.INFO, TAG, "Hot reloading initiated for target=${currentTarget?.packageName}")
         return true
@@ -183,6 +190,7 @@ class MiImePrivacyModule : XposedModule() {
         currentClassLoader = classLoader
         currentAppInfo = appInfo
         ConfigBridge.attachContext(appCtx)
+        ImeEmojiRuntimeBridge.attachIfMainProcess(target, appCtx, currentProcessName.ifBlank { target.packageName })
 
         targetPacksInstalled.set(false)
         overlayInstalled.set(false)
@@ -210,7 +218,7 @@ class MiImePrivacyModule : XposedModule() {
             KeyboardQuickPillHook.onConfigChanged(oldCfg, newCfg)
             val ctx = registry.attachedContext ?: currentApplicationByReflection()?.let { it.applicationContext ?: it }
             if (oldCfg.isImeManaged(target) && !newCfg.isImeManaged(target)) {
-                registry.unhookActiveTargetHooks(keepPrefixes = setOf("lifecycle:", "overlay:"))
+                registry.unhookActiveTargetHooks(keepPrefixes = setOf("lifecycle:", "overlay:", "emoji:"))
                 targetPacksInstalled.set(false)
                 val overlayRuleId = HookRuleCatalog.overlayRuleIdFor(target)
                 registry.reportAllSkipped(

@@ -8,3 +8,6 @@
 
 -keep class com.scluzlep.miimeprivacy.** { *; }
 -keep class org.luckypray.dexkit.** { *; }
+
+# FileProvider for Noto archive and emoji-test.txt sharing across IME processes
+-keep class androidx.core.content.FileProvider { *; }
