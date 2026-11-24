@@ -107,8 +107,8 @@ jobs:
             echo "::error::Legacy xposedminversion metadata present"
             exit 1
           fi
-      - name: Verify v1.1 integration invariants
-        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+      - name: Verify v1.2 integration invariants
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/heads/feat/') || startsWith(github.ref, 'refs/heads/fix/')
         shell: bash
         run: |
           set -euo pipefail
@@ -139,6 +139,7 @@ jobs:
           assert re.search(r"MIN_PILL_ALPHA\s*=\s*0\.10f", cfg), "PrivacyConfig MIN_PILL_ALPHA must be 0.10f"
           assert re.search(r"MAX_PILL_OFFSET_DP\s*=\s*2000\b", cfg), "PrivacyConfig MAX_PILL_OFFSET_DP must be 2000"
           assert "hidePillInLandscape" in cfg, "PrivacyConfig missing hidePillInLandscape"
+          assert "SymbolResolveMode" in cfg, "PrivacyConfig missing SymbolResolveMode"
 
           settings = pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/ui/screens/SettingsTab.kt").read_text(encoding="utf-8")
           assert '"关于"' in settings, "SettingsTab missing 关于 title"
@@ -146,6 +147,17 @@ jobs:
           assert "https://github.com/Scluzlep/miimeprivacy" in settings, "SettingsTab missing GitHub URL"
           for removed in ("关于与安全边界", "Xposed 与签名校验规范", "已审计目标输入法基准版本", "透明与克制原则"):
               assert removed not in settings, f"SettingsTab still contains removed section: {removed}"
+
+          overview = pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/ui/screens/OverviewTab.kt").read_text(encoding="utf-8")
+          assert "清除 DexKit 符号缓存" in overview, "OverviewTab missing clear DexKit cache button"
+          assert "当前解析方式" in overview, "OverviewTab missing resolve method label"
+
+          rules_tab = pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/ui/screens/RulesTab.kt").read_text(encoding="utf-8")
+          assert "formatRuleStatusBadge" in rules_tab, "RulesTab missing formatRuleStatusBadge"
+
+          quick_panel = pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/xposed/overlay/QuickPanelViewFactory.kt").read_text(encoding="utf-8")
+          assert "符号缓存" not in quick_panel, "QuickPanelViewFactory must not expose symbol cache controls"
+          assert "clearCacheNow" not in quick_panel, "QuickPanelViewFactory must not call clearCacheNow"
 
           lines = manifest_tree.splitlines()
           fp = None
@@ -165,7 +177,7 @@ jobs:
           assert ".archiveprovider" in fp, "FileProvider missing .archiveprovider authority"
           assert re.search(r"android:exported(?:\(0x[0-9a-f]+\))?=(?:false|\(type 0x12\)0x0)\b", fp), f"FileProvider must have exported=false:\n{fp}"
 
-          print("Verified v1.1 integration invariants")
+          print("Verified v1.2 integration invariants")
           PY
       - name: Upload PR debug APK artifact
         if: github.event_name == 'pull_request'

@@ -67,6 +67,8 @@ data class ImeRuntimeDiagnostics(
     val moduleApiVersion: Int = 102,
     val frameworkName: String = "",
     val activeCloudEnabled: Boolean = true,
+    val resolveMode: String = "AUTO",
+    val cachedSymbolCount: Int = 0,
     val lastUpdatedAtMs: Long = 0L,
     val rules: List<HookRuleReport> = emptyList(),
     val note: String = ""
@@ -89,6 +91,8 @@ data class ImeRuntimeDiagnostics(
         put(KEY_MODULE_API_VERSION, moduleApiVersion)
         put(KEY_FRAMEWORK_NAME, frameworkName)
         put(KEY_ACTIVE_CLOUD_ENABLED, activeCloudEnabled)
+        put(KEY_RESOLVE_MODE, resolveMode)
+        put(KEY_CACHED_SYMBOL_COUNT, cachedSymbolCount.coerceAtLeast(0))
         put(KEY_LAST_UPDATED_AT_MS, lastUpdatedAtMs)
         put(KEY_NOTE, note)
         put(KEY_RULES, JSONArray().apply {
@@ -107,6 +111,8 @@ data class ImeRuntimeDiagnostics(
         private const val KEY_MODULE_API_VERSION = "moduleApiVersion"
         private const val KEY_FRAMEWORK_NAME = "frameworkName"
         private const val KEY_ACTIVE_CLOUD_ENABLED = "activeCloudEnabled"
+        private const val KEY_RESOLVE_MODE = "resolveMode"
+        private const val KEY_CACHED_SYMBOL_COUNT = "cachedSymbolCount"
         private const val KEY_LAST_UPDATED_AT_MS = "lastUpdatedAtMs"
         private const val KEY_RULES = "rules"
         private const val KEY_NOTE = "note"
@@ -136,6 +142,8 @@ data class ImeRuntimeDiagnostics(
                 moduleApiVersion = obj.optInt(KEY_MODULE_API_VERSION, 102),
                 frameworkName = obj.optString(KEY_FRAMEWORK_NAME, ""),
                 activeCloudEnabled = obj.optBoolean(KEY_ACTIVE_CLOUD_ENABLED, true),
+                resolveMode = obj.optString(KEY_RESOLVE_MODE, "AUTO").ifBlank { "AUTO" },
+                cachedSymbolCount = obj.optInt(KEY_CACHED_SYMBOL_COUNT, 0).coerceAtLeast(0),
                 lastUpdatedAtMs = obj.optLong(KEY_LAST_UPDATED_AT_MS, 0L),
                 rules = parsedRules,
                 note = obj.optString(KEY_NOTE, "")

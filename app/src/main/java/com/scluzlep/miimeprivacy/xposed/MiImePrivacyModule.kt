@@ -18,6 +18,7 @@ import com.scluzlep.miimeprivacy.xposed.targets.XiaoAiHookPack
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
 import io.github.libxposed.api.XposedModuleInterface
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -27,6 +28,10 @@ class MiImePrivacyModule : XposedModule() {
 
     private val targetPacksInstalled = AtomicBoolean(false)
     private val overlayInstalled = AtomicBoolean(false)
+    private val installLock = Any()
+    private val reanalyzeExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "miime-reanalyze").apply { isDaemon = true }
+    }
 
     @Volatile
     private var isSystemServerProcess: Boolean = false
@@ -217,15 +222,60 @@ class MiImePrivacyModule : XposedModule() {
         val listener: (PrivacyConfig, PrivacyConfig) -> Unit = { oldCfg, newCfg ->
             KeyboardQuickPillHook.onConfigChanged(oldCfg, newCfg)
             val ctx = registry.attachedContext ?: currentApplicationByReflection()?.let { it.applicationContext ?: it }
+            val modeChanged = oldCfg.resolveModeFor(target) != newCfg.resolveModeFor(target)
+            val cacheResetRequested = newCfg.cacheResetAtMsFor(target) > oldCfg.cacheResetAtMsFor(target)
+            val overlayRuleId = HookRuleCatalog.overlayRuleIdFor(target)
+
             if (oldCfg.isImeManaged(target) && !newCfg.isImeManaged(target)) {
-                registry.unhookActiveTargetHooks(keepPrefixes = setOf("lifecycle:", "overlay:", "emoji:"))
-                targetPacksInstalled.set(false)
-                val overlayRuleId = HookRuleCatalog.overlayRuleIdFor(target)
-                registry.reportAllSkipped(
-                    reason = "已关闭对该输入法的隐私接管",
-                    excludeRuleIds = setOf(overlayRuleId)
-                )
-                registry.pushDiagnosticsNow(ctx, note = "未接管")
+                if (cacheResetRequested && ctx != null) {
+                    reanalyzeExecutor.execute {
+                        synchronized(installLock) {
+                            SymbolResolver.clearCacheNow(ctx, newCfg.cacheResetAtMsFor(target))
+                            registry.unhookActiveTargetHooks(keepPrefixes = setOf("lifecycle:", "overlay:", "emoji:"))
+                            targetPacksInstalled.set(false)
+                            registry.reportAllSkipped(
+                                reason = "已关闭对该输入法的隐私接管",
+                                excludeRuleIds = setOf(overlayRuleId)
+                            )
+                            registry.pushDiagnosticsNow(ctx, note = "未接管")
+                        }
+                    }
+                } else {
+                    synchronized(installLock) {
+                        registry.unhookActiveTargetHooks(keepPrefixes = setOf("lifecycle:", "overlay:", "emoji:"))
+                        targetPacksInstalled.set(false)
+                        registry.reportAllSkipped(
+                            reason = "已关闭对该输入法的隐私接管",
+                            excludeRuleIds = setOf(overlayRuleId)
+                        )
+                    }
+                    registry.pushDiagnosticsNow(ctx, note = "未接管")
+                }
+            } else if (modeChanged || cacheResetRequested) {
+                if (ctx != null) {
+                    reanalyzeExecutor.execute {
+                        synchronized(installLock) {
+                            if (cacheResetRequested) {
+                                SymbolResolver.clearCacheNow(ctx, newCfg.cacheResetAtMsFor(target))
+                            }
+                            if (ConfigBridge.isTargetManaged(target)) {
+                                if (target == ImeTarget.SOGOU) {
+                                    SogouHookPack.resetCaches()
+                                }
+                                registry.unhookActiveTargetHooks(keepPrefixes = setOf("lifecycle:", "overlay:", "emoji:"))
+                                registry.resetTargetRuleReports(excludeRuleIds = setOf(overlayRuleId))
+                                targetPacksInstalled.set(false)
+                                installTargetPacksIfManaged(target, ctx, classLoader, appInfo, registry)
+                            } else {
+                                registry.reportAllSkipped(
+                                    reason = "已关闭对该输入法的隐私接管",
+                                    excludeRuleIds = setOf(overlayRuleId)
+                                )
+                                registry.pushDiagnosticsNow(ctx, note = "未接管")
+                            }
+                        }
+                    }
+                }
             } else if (!targetPacksInstalled.get() && newCfg.isImeManaged(target)) {
                 if (ctx != null) {
                     installTargetPacksIfManaged(target, ctx, classLoader, appInfo, registry)
@@ -269,32 +319,34 @@ class MiImePrivacyModule : XposedModule() {
         appInfo: ApplicationInfo,
         registry: HookRegistry
     ) {
-        registry.attachContext(context)
-        installOverlayIfNeeded(target, context, classLoader, appInfo, registry)
+        synchronized(installLock) {
+            registry.attachContext(context)
+            installOverlayIfNeeded(target, context, classLoader, appInfo, registry)
 
-        if (!ConfigBridge.isTargetManaged(target)) {
-            val overlayRuleId = HookRuleCatalog.overlayRuleIdFor(target)
-            registry.reportAllSkipped(
-                reason = "已关闭对该输入法的隐私接管",
-                excludeRuleIds = setOf(overlayRuleId)
+            if (!ConfigBridge.isTargetManaged(target)) {
+                val overlayRuleId = HookRuleCatalog.overlayRuleIdFor(target)
+                registry.reportAllSkipped(
+                    reason = "已关闭对该输入法的隐私接管",
+                    excludeRuleIds = setOf(overlayRuleId)
+                )
+                registry.pushDiagnosticsNow(context, note = "未接管")
+                return
+            }
+            if (!targetPacksInstalled.compareAndSet(false, true)) return
+
+            val pack = packFor(target)
+            val packResult = runCatching {
+                pack.install(context, classLoader, appInfo, registry)
+            }.onFailure { err ->
+                registry.logWarn("Target pack install threw exception", err)
+            }.getOrNull()
+
+            registry.pushDiagnosticsNow(
+                context = context,
+                note = packResult?.note.orEmpty()
             )
-            registry.pushDiagnosticsNow(context, note = "未接管")
-            return
+            registry.logInfo("Installed hooks for ${target.packageName}, activeHandles=${registry.activeHookCount()}")
         }
-        if (!targetPacksInstalled.compareAndSet(false, true)) return
-
-        val pack = packFor(target)
-        val packResult = runCatching {
-            pack.install(context, classLoader, appInfo, registry)
-        }.onFailure { err ->
-            registry.logWarn("Target pack install threw exception", err)
-        }.getOrNull()
-
-        registry.pushDiagnosticsNow(
-            context = context,
-            note = packResult?.note.orEmpty()
-        )
-        registry.logInfo("Installed hooks for ${target.packageName}, activeHandles=${registry.activeHookCount()}")
     }
 
     private fun packFor(target: ImeTarget): ImeHookPack = when (target) {

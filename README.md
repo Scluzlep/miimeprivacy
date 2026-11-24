@@ -47,9 +47,11 @@
 - **百度输入法小米版**：原生内置仅 Emoji 5.0，支持生成 UTF-16LE Emoji 库与 9 组 `emojigroup`、保留原有 SoftBank PUA 映射与中文名、适配单肤色矩阵，并支持恢复默认。
 - **超级小爱输入法**：原生已内置 Emoji 16.0（共 1901 项）且由系统字体直出，无需补全。
 
-## 界面与本地构建
+## 界面、符号解析与本地构建
 
 应用基于 `top.yukonga.miuix.kmp:miuix-ui-android:0.9.0` 与莫奈动态取色，包含 **总览**、**规则**、**胶囊**、**表情**、**设置** 五个页面。
+
+- **符号解析管理（v1.2）**：在「总览」页各输入法卡片点击「符号解析」弹窗，可查看当前解析方式（FastPath 反射 / DexKit 实时搜索 / 符号缓存 / 结构兜底）、切换「自动 FastPath / 动态 DexKit」模式，并在动态模式或存在缓存时一键「清除 DexKit 符号缓存」触发重新分析；「规则」页同步展示每条规则的具体命中来源。
 
 ```bash
 ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug

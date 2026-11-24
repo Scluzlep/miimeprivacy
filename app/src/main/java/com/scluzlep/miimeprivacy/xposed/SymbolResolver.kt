@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.ApplicationInfo
 import com.scluzlep.miimeprivacy.config.ConfigContract
+import com.scluzlep.miimeprivacy.config.SymbolResolveMode
 import org.luckypray.dexkit.DexKitBridge
 import org.luckypray.dexkit.util.DexSignUtil
 import org.luckypray.dexkit.wrap.DexClass
@@ -39,19 +40,31 @@ data class ResolveResult<T>(
  * 2. Versioned SharedPreferences descriptor cache (`SYMBOL_CACHE_PREFS_NAME`)
  * 3. Lazy `DexKitBridge` (loads `libdexkit.so` from module `nativeLibraryDir` only on cache miss)
  * 4. Structural fallback lambda
+ *
+ * When [resolveMode] is [SymbolResolveMode.DYNAMIC], targets with a `dexKitFinder` or
+ * `structuralFallback` resolve via `Cache -> DexKit -> StructuralFallback -> FastPath`.
  */
 class SymbolResolver(
     context: Context?,
     private val classLoader: ClassLoader,
     private val appInfo: ApplicationInfo,
     private val versionCode: Long,
-    private val moduleNativeLibDir: String?
+    private val moduleNativeLibDir: String?,
+    val resolveMode: SymbolResolveMode = SymbolResolveMode.AUTO,
+    val requiredCacheResetAtMs: Long = 0L,
+    internal val prefsOverride: SharedPreferences? = null
 ) : AutoCloseable {
 
-    private val prefs: SharedPreferences? = context?.let { ctx ->
+    private val prefs: SharedPreferences? = prefsOverride ?: context?.let { ctx ->
         runCatching {
             ctx.getSharedPreferences(ConfigContract.SYMBOL_CACHE_PREFS_NAME, Context.MODE_PRIVATE)
         }.getOrNull()
+    }
+
+    init {
+        if (prefs != null && requiredCacheResetAtMs > 0L) {
+            applyPendingResetIfNeeded(prefs, requiredCacheResetAtMs)
+        }
     }
 
     @Volatile
@@ -60,61 +73,93 @@ class SymbolResolver(
     @Volatile
     private var bridgeInitAttempted: Boolean = false
 
+    private fun <T> runResolutionOrder(
+        preferDynamic: Boolean,
+        tryFastPath: () -> ResolveResult<T>?,
+        tryCache: () -> ResolveResult<T>?,
+        tryDexKit: () -> ResolveResult<T>?,
+        tryStructural: () -> ResolveResult<T>?
+    ): ResolveResult<T> {
+        val attempts = if (preferDynamic) {
+            listOf(tryCache, tryDexKit, tryStructural, tryFastPath)
+        } else {
+            listOf(tryFastPath, tryCache, tryDexKit, tryStructural)
+        }
+        for (attempt in attempts) {
+            attempt()?.let { return it }
+        }
+        return ResolveResult(null, ResolveSource.MISS)
+    }
+
     fun resolveClass(
         cacheKey: String,
         fastPathCandidates: List<String> = emptyList(),
         dexKitFinder: ((DexKitBridge) -> String?)? = null,
         structuralFallback: ((ClassLoader) -> Class<*>?)? = null
     ): ResolveResult<Class<*>> {
-        // 1. FastPath
-        for (name in fastPathCandidates) {
-            val hit = loadClassOrNull(name, classLoader)
-            if (hit != null) {
-                val descriptor = DexClass(hit).toString()
-                return ResolveResult(hit, ResolveSource.FAST_PATH, descriptor, name)
-            }
-        }
-
-        // 2. Versioned SharedPreferences cache
         val storageKey = buildCacheKey(versionCode, cacheKey)
-        val cachedDescriptor = prefs?.getString(storageKey, null)
-        if (!cachedDescriptor.isNullOrBlank()) {
-            val cachedClass = runCatching {
-                DexClass.deserialize(cachedDescriptor).getInstance(classLoader)
-            }.getOrNull()
-            if (cachedClass != null) {
-                return ResolveResult(cachedClass, ResolveSource.CACHE, cachedDescriptor, cachedClass.name)
-            }
-        }
-
-        // 3. Lazy DexKit
-        if (dexKitFinder != null) {
-            val dexBridge = getOrCreateBridge()
-            if (dexBridge != null) {
-                val foundDescriptor = runCatching { dexKitFinder(dexBridge) }.getOrNull()
-                if (!foundDescriptor.isNullOrBlank()) {
-                    val resolved = runCatching {
-                        DexClass.deserialize(foundDescriptor).getInstance(classLoader)
+        val preferDynamic = resolveMode == SymbolResolveMode.DYNAMIC &&
+            (dexKitFinder != null || structuralFallback != null)
+        return runResolutionOrder(
+            preferDynamic = preferDynamic,
+            tryFastPath = {
+                var fastResult: ResolveResult<Class<*>>? = null
+                for (name in fastPathCandidates) {
+                    val hit = loadClassOrNull(name, classLoader)
+                    if (hit != null) {
+                        fastResult = ResolveResult(hit, ResolveSource.FAST_PATH, DexClass(hit).toString(), name)
+                        break
+                    }
+                }
+                fastResult
+            },
+            tryCache = {
+                val cachedDescriptor = prefs?.getString(storageKey, null)
+                if (cachedDescriptor.isNullOrBlank()) {
+                    null
+                } else {
+                    val cachedClass = runCatching {
+                        DexClass.deserialize(cachedDescriptor).getInstance(classLoader)
                     }.getOrNull()
-                    if (resolved != null) {
-                        saveCacheDescriptor(storageKey, foundDescriptor)
-                        return ResolveResult(resolved, ResolveSource.DEXKIT, foundDescriptor, resolved.name)
+                    cachedClass?.let { ResolveResult(it, ResolveSource.CACHE, cachedDescriptor, it.name) }
+                }
+            },
+            tryDexKit = {
+                if (dexKitFinder == null) {
+                    null
+                } else {
+                    val dexBridge = getOrCreateBridge()
+                    val foundDescriptor = dexBridge?.let { runCatching { dexKitFinder(it) }.getOrNull() }
+                    if (foundDescriptor.isNullOrBlank()) {
+                        null
+                    } else {
+                        val resolved = runCatching {
+                            DexClass.deserialize(foundDescriptor).getInstance(classLoader)
+                        }.getOrNull()
+                        if (resolved != null) {
+                            saveCacheDescriptor(storageKey, foundDescriptor)
+                            ResolveResult(resolved, ResolveSource.DEXKIT, foundDescriptor, resolved.name)
+                        } else {
+                            null
+                        }
+                    }
+                }
+            },
+            tryStructural = {
+                if (structuralFallback == null) {
+                    null
+                } else {
+                    val fallback = runCatching { structuralFallback(classLoader) }.getOrNull()
+                    if (fallback != null) {
+                        val descriptor = DexClass(fallback).toString()
+                        saveCacheDescriptor(storageKey, descriptor)
+                        ResolveResult(fallback, ResolveSource.STRUCTURAL_FALLBACK, descriptor, fallback.name)
+                    } else {
+                        null
                     }
                 }
             }
-        }
-
-        // 4. Structural fallback
-        if (structuralFallback != null) {
-            val fallback = runCatching { structuralFallback(classLoader) }.getOrNull()
-            if (fallback != null) {
-                val descriptor = DexClass(fallback).toString()
-                saveCacheDescriptor(storageKey, descriptor)
-                return ResolveResult(fallback, ResolveSource.STRUCTURAL_FALLBACK, descriptor, fallback.name)
-            }
-        }
-
-        return ResolveResult(null, ResolveSource.MISS)
+        )
     }
 
     fun resolveMethod(
@@ -143,51 +188,67 @@ class SymbolResolver(
         dexKitFinder: ((DexKitBridge) -> String?)? = null,
         structuralFallback: ((ClassLoader) -> Executable?)? = null
     ): ResolveResult<Executable> {
-        // 1. FastPath
-        if (fastPath != null) {
-            val hit = runCatching { fastPath(classLoader) }.getOrNull()
-            if (hit != null) {
-                val descriptor = executableToDescriptor(hit)
-                return ResolveResult(hit, ResolveSource.FAST_PATH, descriptor, formatExecutable(hit))
-            }
-        }
-
-        // 2. Versioned SharedPreferences cache
         val storageKey = buildCacheKey(versionCode, cacheKey)
-        val cachedDescriptor = prefs?.getString(storageKey, null)
-        if (!cachedDescriptor.isNullOrBlank()) {
-            val cached = descriptorToExecutable(cachedDescriptor, classLoader)
-            if (cached != null) {
-                return ResolveResult(cached, ResolveSource.CACHE, cachedDescriptor, formatExecutable(cached))
-            }
-        }
-
-        // 3. Lazy DexKit
-        if (dexKitFinder != null) {
-            val dexBridge = getOrCreateBridge()
-            if (dexBridge != null) {
-                val foundDescriptor = runCatching { dexKitFinder(dexBridge) }.getOrNull()
-                if (!foundDescriptor.isNullOrBlank()) {
-                    val resolved = descriptorToExecutable(foundDescriptor, classLoader)
-                    if (resolved != null) {
-                        saveCacheDescriptor(storageKey, foundDescriptor)
-                        return ResolveResult(resolved, ResolveSource.DEXKIT, foundDescriptor, formatExecutable(resolved))
+        val preferDynamic = resolveMode == SymbolResolveMode.DYNAMIC &&
+            (dexKitFinder != null || structuralFallback != null)
+        return runResolutionOrder(
+            preferDynamic = preferDynamic,
+            tryFastPath = {
+                if (fastPath == null) {
+                    null
+                } else {
+                    val hit = runCatching { fastPath(classLoader) }.getOrNull()
+                    if (hit != null) {
+                        val descriptor = executableToDescriptor(hit)
+                        ResolveResult(hit, ResolveSource.FAST_PATH, descriptor, formatExecutable(hit))
+                    } else {
+                        null
+                    }
+                }
+            },
+            tryCache = {
+                val cachedDescriptor = prefs?.getString(storageKey, null)
+                if (cachedDescriptor.isNullOrBlank()) {
+                    null
+                } else {
+                    val cached = descriptorToExecutable(cachedDescriptor, classLoader)
+                    cached?.let { ResolveResult(it, ResolveSource.CACHE, cachedDescriptor, formatExecutable(it)) }
+                }
+            },
+            tryDexKit = {
+                if (dexKitFinder == null) {
+                    null
+                } else {
+                    val dexBridge = getOrCreateBridge()
+                    val foundDescriptor = dexBridge?.let { runCatching { dexKitFinder(it) }.getOrNull() }
+                    if (foundDescriptor.isNullOrBlank()) {
+                        null
+                    } else {
+                        val resolved = descriptorToExecutable(foundDescriptor, classLoader)
+                        if (resolved != null) {
+                            saveCacheDescriptor(storageKey, foundDescriptor)
+                            ResolveResult(resolved, ResolveSource.DEXKIT, foundDescriptor, formatExecutable(resolved))
+                        } else {
+                            null
+                        }
+                    }
+                }
+            },
+            tryStructural = {
+                if (structuralFallback == null) {
+                    null
+                } else {
+                    val fallback = runCatching { structuralFallback(classLoader) }.getOrNull()
+                    if (fallback != null) {
+                        val descriptor = executableToDescriptor(fallback)
+                        saveCacheDescriptor(storageKey, descriptor)
+                        ResolveResult(fallback, ResolveSource.STRUCTURAL_FALLBACK, descriptor, formatExecutable(fallback))
+                    } else {
+                        null
                     }
                 }
             }
-        }
-
-        // 4. Structural fallback
-        if (structuralFallback != null) {
-            val fallback = runCatching { structuralFallback(classLoader) }.getOrNull()
-            if (fallback != null) {
-                val descriptor = executableToDescriptor(fallback)
-                saveCacheDescriptor(storageKey, descriptor)
-                return ResolveResult(fallback, ResolveSource.STRUCTURAL_FALLBACK, descriptor, formatExecutable(fallback))
-            }
-        }
-
-        return ResolveResult(null, ResolveSource.MISS)
+        )
     }
 
     fun resolveField(
@@ -196,55 +257,83 @@ class SymbolResolver(
         dexKitFinder: ((DexKitBridge) -> String?)? = null,
         structuralFallback: ((ClassLoader) -> Field?)? = null
     ): ResolveResult<Field> {
-        // 1. FastPath
-        if (fastPath != null) {
-            val hit = runCatching { fastPath(classLoader) }.getOrNull()
-            if (hit != null) {
-                val descriptor = DexField(hit).toString()
-                return ResolveResult(hit, ResolveSource.FAST_PATH, descriptor, "${hit.declaringClass.name}#${hit.name}")
-            }
-        }
-
-        // 2. Cache
         val storageKey = buildCacheKey(versionCode, cacheKey)
-        val cachedDescriptor = prefs?.getString(storageKey, null)
-        if (!cachedDescriptor.isNullOrBlank()) {
-            val cached = runCatching {
-                DexField.deserialize(cachedDescriptor).getFieldInstance(classLoader)
-            }.getOrNull()
-            if (cached != null) {
-                return ResolveResult(cached, ResolveSource.CACHE, cachedDescriptor, "${cached.declaringClass.name}#${cached.name}")
-            }
-        }
-
-        // 3. Lazy DexKit
-        if (dexKitFinder != null) {
-            val dexBridge = getOrCreateBridge()
-            if (dexBridge != null) {
-                val foundDescriptor = runCatching { dexKitFinder(dexBridge) }.getOrNull()
-                if (!foundDescriptor.isNullOrBlank()) {
-                    val resolved = runCatching {
-                        DexField.deserialize(foundDescriptor).getFieldInstance(classLoader)
+        val preferDynamic = resolveMode == SymbolResolveMode.DYNAMIC &&
+            (dexKitFinder != null || structuralFallback != null)
+        return runResolutionOrder(
+            preferDynamic = preferDynamic,
+            tryFastPath = {
+                if (fastPath == null) {
+                    null
+                } else {
+                    val hit = runCatching { fastPath(classLoader) }.getOrNull()
+                    if (hit != null) {
+                        val descriptor = DexField(hit).toString()
+                        ResolveResult(hit, ResolveSource.FAST_PATH, descriptor, "${hit.declaringClass.name}#${hit.name}")
+                    } else {
+                        null
+                    }
+                }
+            },
+            tryCache = {
+                val cachedDescriptor = prefs?.getString(storageKey, null)
+                if (cachedDescriptor.isNullOrBlank()) {
+                    null
+                } else {
+                    val cached = runCatching {
+                        DexField.deserialize(cachedDescriptor).getFieldInstance(classLoader)
                     }.getOrNull()
-                    if (resolved != null) {
-                        saveCacheDescriptor(storageKey, foundDescriptor)
-                        return ResolveResult(resolved, ResolveSource.DEXKIT, foundDescriptor, "${resolved.declaringClass.name}#${resolved.name}")
+                    cached?.let {
+                        ResolveResult(it, ResolveSource.CACHE, cachedDescriptor, "${it.declaringClass.name}#${it.name}")
+                    }
+                }
+            },
+            tryDexKit = {
+                if (dexKitFinder == null) {
+                    null
+                } else {
+                    val dexBridge = getOrCreateBridge()
+                    val foundDescriptor = dexBridge?.let { runCatching { dexKitFinder(it) }.getOrNull() }
+                    if (foundDescriptor.isNullOrBlank()) {
+                        null
+                    } else {
+                        val resolved = runCatching {
+                            DexField.deserialize(foundDescriptor).getFieldInstance(classLoader)
+                        }.getOrNull()
+                        if (resolved != null) {
+                            saveCacheDescriptor(storageKey, foundDescriptor)
+                            ResolveResult(
+                                resolved,
+                                ResolveSource.DEXKIT,
+                                foundDescriptor,
+                                "${resolved.declaringClass.name}#${resolved.name}"
+                            )
+                        } else {
+                            null
+                        }
+                    }
+                }
+            },
+            tryStructural = {
+                if (structuralFallback == null) {
+                    null
+                } else {
+                    val fallback = runCatching { structuralFallback(classLoader) }.getOrNull()
+                    if (fallback != null) {
+                        val descriptor = DexField(fallback).toString()
+                        saveCacheDescriptor(storageKey, descriptor)
+                        ResolveResult(
+                            fallback,
+                            ResolveSource.STRUCTURAL_FALLBACK,
+                            descriptor,
+                            "${fallback.declaringClass.name}#${fallback.name}"
+                        )
+                    } else {
+                        null
                     }
                 }
             }
-        }
-
-        // 4. Structural fallback
-        if (structuralFallback != null) {
-            val fallback = runCatching { structuralFallback(classLoader) }.getOrNull()
-            if (fallback != null) {
-                val descriptor = DexField(fallback).toString()
-                saveCacheDescriptor(storageKey, descriptor)
-                return ResolveResult(fallback, ResolveSource.STRUCTURAL_FALLBACK, descriptor, "${fallback.declaringClass.name}#${fallback.name}")
-            }
-        }
-
-        return ResolveResult(null, ResolveSource.MISS)
+        )
     }
 
     private fun saveCacheDescriptor(storageKey: String, descriptor: String) {
@@ -276,9 +365,66 @@ class SymbolResolver(
 
     companion object {
         private val nativeLoaded = AtomicBoolean(false)
+        const val KEY_APPLIED_RESET_AT_MS = "_applied_reset_at_ms"
 
         fun buildCacheKey(versionCode: Long, cacheKey: String): String {
             return "v$versionCode:$cacheKey"
+        }
+
+        fun isSymbolCacheEntryKey(key: String): Boolean {
+            return key.startsWith("v") && key.contains(':')
+        }
+
+        fun countCachedSymbols(prefs: SharedPreferences?): Int {
+            prefs ?: return 0
+            val allEntries = runCatching { prefs.all }.getOrNull() ?: return 0
+            return allEntries.keys.count(::isSymbolCacheEntryKey)
+        }
+
+        fun countCachedSymbols(context: Context?): Int {
+            val ctx = context ?: return 0
+            val prefs = runCatching {
+                ctx.getSharedPreferences(ConfigContract.SYMBOL_CACHE_PREFS_NAME, Context.MODE_PRIVATE)
+            }.getOrNull()
+            return countCachedSymbols(prefs)
+        }
+
+        fun clearCacheNow(
+            prefs: SharedPreferences?,
+            resetAtMs: Long = System.currentTimeMillis()
+        ): Int {
+            prefs ?: return 0
+            val keysToRemove = runCatching {
+                prefs.all.keys.filter(::isSymbolCacheEntryKey)
+            }.getOrDefault(emptyList())
+            val existingReset = runCatching { prefs.getLong(KEY_APPLIED_RESET_AT_MS, 0L) }.getOrDefault(0L)
+            val nextReset = maxOf(resetAtMs.coerceAtLeast(0L), existingReset)
+            val editor = prefs.edit()
+            for (key in keysToRemove) {
+                editor.remove(key)
+            }
+            editor.putLong(KEY_APPLIED_RESET_AT_MS, nextReset)
+            editor.commit()
+            return keysToRemove.size
+        }
+
+        fun clearCacheNow(
+            context: Context?,
+            resetAtMs: Long = System.currentTimeMillis()
+        ): Int {
+            val ctx = context ?: return 0
+            val prefs = runCatching {
+                ctx.getSharedPreferences(ConfigContract.SYMBOL_CACHE_PREFS_NAME, Context.MODE_PRIVATE)
+            }.getOrNull()
+            return clearCacheNow(prefs, resetAtMs)
+        }
+
+        fun applyPendingResetIfNeeded(prefs: SharedPreferences?, requiredResetAtMs: Long): Boolean {
+            if (prefs == null || requiredResetAtMs <= 0L) return false
+            val applied = runCatching { prefs.getLong(KEY_APPLIED_RESET_AT_MS, 0L) }.getOrDefault(0L)
+            if (applied >= requiredResetAtMs) return false
+            clearCacheNow(prefs, requiredResetAtMs)
+            return true
         }
 
         fun loadClassOrNull(className: String, classLoader: ClassLoader): Class<*>? {

@@ -420,9 +420,9 @@ class SogouHookPackTest {
         assertEquals(ResolveSource.FAST_PATH.name, degradedReport.source)
         assertEquals(3L, degradedReport.blockedCount)
 
-        // 2. Primary resolved via DEXKIT -> FALLBACK, preserves DEXKIT source & matchedMethod
-        val fallbackStats = SogouHookPack.RuleStats()
-        fallbackStats.recordOutcome(
+        // 2. Primary resolved via DEXKIT -> ACTIVE, preserves DEXKIT source & matchedMethod
+        val dexKitStats = SogouHookPack.RuleStats()
+        dexKitStats.recordOutcome(
             hookName = "alive_strategy_a",
             source = ResolveSource.DEXKIT,
             count = 1,
@@ -430,16 +430,42 @@ class SogouHookPackTest {
             reportedSource = ResolveSource.DEXKIT.name,
             primary = true
         )
+        val dexKitReport = dexKitStats.buildFinalReport(
+            existing = null,
+            ruleId = HookRuleCatalog.RULE_SOGOU_PRIVACY_GATE,
+            summaryPrefix = "PrivacyGate"
+        )
+        assertEquals(HookMatchStatus.ACTIVE, dexKitReport.status)
+        assertEquals("com.sogou.alive.strategy.a#a()", dexKitReport.matchedMethod)
+        assertEquals(ResolveSource.DEXKIT.name, dexKitReport.source)
+
+        // 3. Primary resolved via STRUCTURAL_FALLBACK -> FALLBACK, preserves distinct sources
+        val fallbackStats = SogouHookPack.RuleStats()
+        fallbackStats.recordOutcome(
+            hookName = "alive_strategy_a",
+            source = ResolveSource.STRUCTURAL_FALLBACK,
+            count = 1,
+            matchedMethod = "com.sogou.alive.strategy.a#a()",
+            reportedSource = ResolveSource.STRUCTURAL_FALLBACK.name,
+            primary = true
+        )
+        fallbackStats.recordOutcome(
+            hookName = "secondary_dexkit",
+            source = ResolveSource.DEXKIT,
+            count = 1,
+            matchedMethod = "com.sogou.alive.a#c()",
+            reportedSource = ResolveSource.DEXKIT.name,
+            primary = false
+        )
         val fallbackReport = fallbackStats.buildFinalReport(
             existing = null,
             ruleId = HookRuleCatalog.RULE_SOGOU_PRIVACY_GATE,
             summaryPrefix = "PrivacyGate"
         )
         assertEquals(HookMatchStatus.FALLBACK, fallbackReport.status)
-        assertEquals("com.sogou.alive.strategy.a#a()", fallbackReport.matchedMethod)
-        assertEquals(ResolveSource.DEXKIT.name, fallbackReport.source)
+        assertEquals("STRUCTURAL_FALLBACK,DEXKIT", fallbackReport.source)
 
-        // 3. All primary hooks miss while secondary succeeds -> FAILED
+        // 4. All primary hooks miss while secondary succeeds -> FAILED
         val failedStats = SogouHookPack.RuleStats()
         failedStats.recordOutcome(
             hookName = "primary_miss",

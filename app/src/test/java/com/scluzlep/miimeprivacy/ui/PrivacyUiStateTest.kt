@@ -4,12 +4,14 @@ import com.scluzlep.miimeprivacy.bridge.ServiceUiState
 import com.scluzlep.miimeprivacy.config.CloudOverride
 import com.scluzlep.miimeprivacy.config.MonetPaletteStyle
 import com.scluzlep.miimeprivacy.config.PrivacyConfig
+import com.scluzlep.miimeprivacy.config.SymbolResolveMode
 import com.scluzlep.miimeprivacy.config.ThemeMode
 import com.scluzlep.miimeprivacy.model.HookMatchStatus
 import com.scluzlep.miimeprivacy.model.HookRuleCatalog
 import com.scluzlep.miimeprivacy.model.HookRuleReport
 import com.scluzlep.miimeprivacy.model.ImeRuntimeDiagnostics
 import com.scluzlep.miimeprivacy.model.ImeTarget
+import com.scluzlep.miimeprivacy.ui.screens.formatRuleStatusBadge
 import com.scluzlep.miimeprivacy.ui.theme.isDarkTheme
 import com.scluzlep.miimeprivacy.ui.theme.paletteStyleDescription
 import com.scluzlep.miimeprivacy.ui.theme.paletteStyleLabel
@@ -259,5 +261,95 @@ class PrivacyUiStateTest {
             MainTab.entries.map { it.title }
         )
         assertTrue(PrivacyConfig().hidePillInLandscape)
+    }
+
+    @Test
+    fun symbolResolutionSummaryAndRuleStatusBadgesReflectModeSourceAndCache() {
+        // 1. AUTO + FastPath + 0 cached -> cannot clear cache
+        val autoDiag = ImeRuntimeDiagnostics(
+            target = ImeTarget.XIAOAI,
+            resolveMode = "AUTO",
+            cachedSymbolCount = 0,
+            rules = listOf(
+                HookRuleReport(HookRuleCatalog.RULE_XIAOAI_ONETRACK, HookMatchStatus.ACTIVE, source = "FAST_PATH"),
+                HookRuleReport(HookRuleCatalog.RULE_XIAOAI_OVERLAY_PILL, HookMatchStatus.ACTIVE, source = "FAST_PATH")
+            )
+        )
+        val autoSummary = PrivacyUiStateBuilder.summarizeSymbolResolution(
+            target = ImeTarget.XIAOAI,
+            resolveMode = SymbolResolveMode.AUTO,
+            diagnostics = autoDiag
+        )
+        assertEquals("FastPath 反射", autoSummary.activeResolveMethodText)
+        assertEquals("自动 · FastPath", autoSummary.cardResolveSummaryText)
+        assertFalse(autoSummary.canClearSymbolCache)
+
+        // 2. AUTO + existing cache -> clear button visible
+        val autoWithCache = PrivacyUiStateBuilder.summarizeSymbolResolution(
+            target = ImeTarget.XIAOAI,
+            resolveMode = SymbolResolveMode.AUTO,
+            diagnostics = autoDiag.copy(cachedSymbolCount = 12)
+        )
+        assertTrue(autoWithCache.canClearSymbolCache)
+        assertEquals("自动 · FastPath · 缓存 12 项", autoWithCache.cardResolveSummaryText)
+
+        // 3. DYNAMIC + live DexKit (even when overlay pill reports FAST_PATH)
+        val dynamicDiag = ImeRuntimeDiagnostics(
+            target = ImeTarget.BAIDU,
+            resolveMode = "DYNAMIC",
+            cachedSymbolCount = 28,
+            rules = listOf(
+                HookRuleReport(HookRuleCatalog.RULE_BAIDU_TELEMETRY, HookMatchStatus.ACTIVE, source = "DEXKIT"),
+                HookRuleReport(HookRuleCatalog.RULE_BAIDU_OVERLAY_PILL, HookMatchStatus.ACTIVE, source = "FAST_PATH")
+            )
+        )
+        val dynamicSummary = PrivacyUiStateBuilder.summarizeSymbolResolution(
+            target = ImeTarget.BAIDU,
+            resolveMode = SymbolResolveMode.DYNAMIC,
+            diagnostics = dynamicDiag
+        )
+        assertEquals("DexKit 实时搜索", dynamicSummary.activeResolveMethodText)
+        assertEquals("动态 · DexKit · 缓存 28 项", dynamicSummary.cardResolveSummaryText)
+        assertTrue(dynamicSummary.canClearSymbolCache)
+
+        // 4. DYNAMIC + CACHE hit avoids duplicate "缓存" word
+        val cacheSummary = PrivacyUiStateBuilder.summarizeSymbolResolution(
+            target = ImeTarget.SOGOU,
+            resolveMode = SymbolResolveMode.DYNAMIC,
+            diagnostics = ImeRuntimeDiagnostics(
+                target = ImeTarget.SOGOU,
+                resolveMode = "DYNAMIC",
+                cachedSymbolCount = 28,
+                rules = listOf(
+                    HookRuleReport(HookRuleCatalog.RULE_SOGOU_PRIVACY_GATE, HookMatchStatus.ACTIVE, source = "CACHE")
+                )
+            )
+        )
+        assertEquals("DexKit 符号缓存", cacheSummary.activeResolveMethodText)
+        assertEquals("动态 · 缓存 28 项", cacheSummary.cardResolveSummaryText)
+        assertTrue(cacheSummary.canClearSymbolCache)
+
+        // 5. DYNAMIC with 0 cache still offers clear action
+        val dynamicEmpty = PrivacyUiStateBuilder.summarizeSymbolResolution(
+            target = ImeTarget.SOGOU,
+            resolveMode = SymbolResolveMode.DYNAMIC,
+            diagnostics = null
+        )
+        assertEquals("待启动", dynamicEmpty.activeResolveMethodText)
+        assertEquals("动态 · 待启动", dynamicEmpty.cardResolveSummaryText)
+        assertTrue(dynamicEmpty.canClearSymbolCache)
+
+        // 6. Detailed RulesTab badge strings
+        assertEquals("正常 · FastPath", formatRuleStatusBadge(HookMatchStatus.ACTIVE, "FAST_PATH"))
+        assertEquals("正常 · DexKit", formatRuleStatusBadge(HookMatchStatus.ACTIVE, "DEXKIT"))
+        assertEquals("正常 · 缓存", formatRuleStatusBadge(HookMatchStatus.ACTIVE, "CACHE"))
+        assertEquals("正常 · DexKit", formatRuleStatusBadge(HookMatchStatus.ACTIVE, "FAST_PATH,DEXKIT"))
+        assertEquals("正常", formatRuleStatusBadge(HookMatchStatus.ACTIVE, ""))
+        assertEquals("结构兜底", formatRuleStatusBadge(HookMatchStatus.FALLBACK, "STRUCTURAL_FALLBACK"))
+        assertEquals("部分降级 · 缓存", formatRuleStatusBadge(HookMatchStatus.DEGRADED, "CACHE"))
+        assertEquals("关键未命中", formatRuleStatusBadge(HookMatchStatus.FAILED, "", critical = true))
+        assertEquals("未命中", formatRuleStatusBadge(HookMatchStatus.FAILED, "", critical = false))
+        assertEquals("已跳过", formatRuleStatusBadge(HookMatchStatus.SKIPPED, ""))
+        assertEquals("待激活", formatRuleStatusBadge(HookMatchStatus.PENDING, ""))
     }
 }

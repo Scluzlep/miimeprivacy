@@ -194,6 +194,8 @@ class MainActivity : ComponentActivity() {
                             onToggleAllowCloud = controller::setAllowCloudInput,
                             onToggleImeManaged = controller::setImeManaged,
                             onChangeImeCloudOverride = controller::setImeCloudOverride,
+                            onChangeImeResolveMode = controller::setImeResolveMode,
+                            onClearImeSymbolCache = controller::clearImeSymbolCache,
                             onOpenImeDiagnostics = controller::openDiagnosticsFor
                         )
 

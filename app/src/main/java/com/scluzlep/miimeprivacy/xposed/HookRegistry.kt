@@ -260,6 +260,23 @@ class HookRegistry(
         }
     }
 
+    @Synchronized
+    fun resetTargetRuleReports(excludeRuleIds: Set<String> = emptySet()) {
+        for (spec in HookRuleCatalog.rulesFor(target)) {
+            if (spec.ruleId in excludeRuleIds) continue
+            subHookOutcomes.remove(spec.ruleId)
+            ruleReports.remove(spec.ruleId)
+        }
+        val extraKeys = (ruleReports.keys + subHookOutcomes.keys)
+            .filter { ruleId ->
+                ruleId !in excludeRuleIds && HookRuleCatalog.rulesFor(target).none { it.ruleId == ruleId }
+            }
+        for (extraId in extraKeys) {
+            subHookOutcomes.remove(extraId)
+            ruleReports.remove(extraId)
+        }
+    }
+
     private fun recordSubHookOutcome(ruleId: String, outcome: SubHookOutcome) {
         val snapshot: List<SubHookOutcome>
         val list = subHookOutcomes.computeIfAbsent(ruleId) { mutableListOf() }
@@ -314,6 +331,7 @@ class HookRegistry(
                 val count = blockCounters[r.ruleId]?.get() ?: r.blockedCount
                 r.copy(blockedCount = count)
             }
+        val cfg = ConfigBridge.current
         return ImeRuntimeDiagnostics(
             target = target,
             packageVersionCode = packageVersionCode,
@@ -322,6 +340,8 @@ class HookRegistry(
             moduleApiVersion = xposed.apiVersion,
             frameworkName = runCatching { xposed.frameworkName }.getOrDefault(""),
             activeCloudEnabled = activeCloudEnabled,
+            resolveMode = cfg.resolveModeFor(target).name,
+            cachedSymbolCount = SymbolResolver.countCachedSymbols(attachedContext),
             lastUpdatedAtMs = System.currentTimeMillis(),
             rules = orderedReports + extraReports,
             note = note
@@ -368,6 +388,7 @@ class HookRegistry(
 
     fun createSymbolResolver(): SymbolResolver {
         val moduleLibDir = runCatching { xposed.moduleApplicationInfo.nativeLibraryDir }.getOrNull()
+        val cfg = ConfigBridge.current
         return SymbolResolver(
             context = attachedContext,
             classLoader = appInfo.className?.let { attachedContext?.classLoader }
@@ -375,18 +396,23 @@ class HookRegistry(
                 ?: ClassLoader.getSystemClassLoader(),
             appInfo = appInfo,
             versionCode = packageVersionCode,
-            moduleNativeLibDir = moduleLibDir
+            moduleNativeLibDir = moduleLibDir,
+            resolveMode = cfg.resolveModeFor(target),
+            requiredCacheResetAtMs = cfg.cacheResetAtMsFor(target)
         )
     }
 
     fun createSymbolResolver(classLoader: ClassLoader): SymbolResolver {
         val moduleLibDir = runCatching { xposed.moduleApplicationInfo.nativeLibraryDir }.getOrNull()
+        val cfg = ConfigBridge.current
         return SymbolResolver(
             context = attachedContext,
             classLoader = classLoader,
             appInfo = appInfo,
             versionCode = packageVersionCode,
-            moduleNativeLibDir = moduleLibDir
+            moduleNativeLibDir = moduleLibDir,
+            resolveMode = cfg.resolveModeFor(target),
+            requiredCacheResetAtMs = cfg.cacheResetAtMsFor(target)
         )
     }
 

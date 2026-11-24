@@ -97,6 +97,7 @@ object SogouHookPack : ImeHookPack {
         private var primarySource: String? = null
         private var lastMatchedMethod: String? = null
         private var lastSource: String? = null
+        private val recordedSources = linkedSetOf<String>()
         val details = mutableListOf<String>()
 
         fun record(
@@ -148,11 +149,16 @@ object SogouHookPack : ImeHookPack {
             if (count > 0) {
                 installed += count
                 if (primary) primaryInstalled += count
-                if (source != ResolveSource.FAST_PATH) {
+                if (source == ResolveSource.STRUCTURAL_FALLBACK) {
                     usedFallback = true
                 }
+                val srcTokens = (reportedSource?.takeIf { it.isNotBlank() } ?: source.name)
+                    .split(',')
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() }
+                recordedSources.addAll(srcTokens)
                 val sig = matchedMethod?.takeIf { it.isNotBlank() }
-                val srcName = reportedSource?.takeIf { it.isNotBlank() } ?: source.name
+                val srcName = srcTokens.joinToString(",").ifBlank { source.name }
                 if (sig != null) {
                     lastMatchedMethod = sig
                     lastSource = srcName
@@ -181,9 +187,13 @@ object SogouHookPack : ImeHookPack {
             val matchedMethod = primaryMatchedMethod?.takeIf { it.isNotBlank() }
                 ?: lastMatchedMethod?.takeIf { it.isNotBlank() }
                 ?: existing?.matchedMethod.orEmpty()
-            val source = primarySource?.takeIf { it.isNotBlank() }
-                ?: lastSource?.takeIf { it.isNotBlank() }
-                ?: existing?.source.orEmpty()
+            val source = if (recordedSources.isNotEmpty()) {
+                recordedSources.joinToString(",")
+            } else {
+                primarySource?.takeIf { it.isNotBlank() }
+                    ?: lastSource?.takeIf { it.isNotBlank() }
+                    ?: existing?.source.orEmpty()
+            }
             val missing = if (details.isEmpty()) "" else "; ${details.joinToString(",")}"
             return HookRuleReport(
                 ruleId = ruleId,
@@ -205,6 +215,11 @@ object SogouHookPack : ImeHookPack {
                 detail = report.detail
             )
         }
+    }
+
+    fun resetCaches() {
+        cachedCloudMgrRefs = null
+        cachedImeUiRefs = null
     }
 
     override fun install(
