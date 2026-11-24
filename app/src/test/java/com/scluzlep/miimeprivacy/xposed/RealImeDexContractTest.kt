@@ -61,6 +61,7 @@ class RealImeDexContractTest {
             ClassContract(XiaoAiAnchors.CLASS_ONETRACK_HELPER, listOf("b", "e", "f")),
             ClassContract(XiaoAiAnchors.CLASS_ONETRACK_IMP, listOf("a")),
             ClassContract(XiaoAiAnchors.CLASS_ONETRACK_SYSTEM_IMP),
+            ClassContract(XiaoAiAnchors.CLASS_ONETRACK_LOCAL_IMP),
             ClassContract(XiaoAiAnchors.CLASS_ONETRACK_SERVICE_CONN),
             ClassContract(XiaoAiAnchors.CLASS_SESSION_COLLECTOR, listOf("a", "b", "c", "d", "e"), listOf(XiaoAiAnchors.FIELD_SESSION_HOLDER)),
             ClassContract(XiaoAiAnchors.CLASS_SESSION_HOLDER, listOf("a"), listOf(XiaoAiAnchors.FIELD_SESSION_PASSWORD)),
@@ -96,6 +97,7 @@ class RealImeDexContractTest {
             XiaoAiAnchors.CLASS_ONETRACK_HELPER to (XiaoAiAnchors.ONETRACK_HELPER_STRINGS + XiaoAiAnchors.ONETRACK_HELPER_ERROR_STRINGS),
             XiaoAiAnchors.CLASS_ONETRACK_IMP to XiaoAiAnchors.ONETRACK_IMP_STRINGS,
             XiaoAiAnchors.CLASS_ONETRACK_SYSTEM_IMP to XiaoAiAnchors.ONETRACK_SYSTEM_IMP_STRINGS,
+            XiaoAiAnchors.CLASS_ONETRACK_LOCAL_IMP to XiaoAiAnchors.ONETRACK_LOCAL_IMP_STRINGS,
             XiaoAiAnchors.CLASS_ONETRACK_SERVICE_CONN to XiaoAiAnchors.ONETRACK_SERVICE_CONN_STRINGS,
             XiaoAiAnchors.CLASS_SESSION_COLLECTOR to (
                 XiaoAiAnchors.SESSION_COLLECTOR_STRINGS +

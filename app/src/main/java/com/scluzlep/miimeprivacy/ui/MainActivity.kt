@@ -26,6 +26,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.scluzlep.miimeprivacy.bridge.XposedServiceManager
 import com.scluzlep.miimeprivacy.config.ConfigContract
 import com.scluzlep.miimeprivacy.ui.icons.MiImeIcons
+import com.scluzlep.miimeprivacy.ui.screens.EmojiTab
 import com.scluzlep.miimeprivacy.ui.screens.OverlayTab
 import com.scluzlep.miimeprivacy.ui.screens.OverviewTab
 import com.scluzlep.miimeprivacy.ui.screens.RulesTab
@@ -128,6 +129,7 @@ class MainActivity : ComponentActivity() {
                                 MainTab.OVERVIEW -> "运行状态"
                                 MainTab.RULES -> "拦截规则"
                                 MainTab.OVERLAY -> "悬浮胶囊"
+                                MainTab.EMOJI -> "Emoji 补全"
                                 MainTab.SETTINGS -> "外观与关于"
                             },
                             scrollBehavior = scrollBehavior,
@@ -168,6 +170,12 @@ class MainActivity : ComponentActivity() {
                                 label = MainTab.OVERLAY.title
                             )
                             NavigationBarItem(
+                                selected = selectedTab == MainTab.EMOJI,
+                                onClick = { controller.selectTab(MainTab.EMOJI) },
+                                icon = MiImeIcons.EmojiFace,
+                                label = MainTab.EMOJI.title
+                            )
+                            NavigationBarItem(
                                 selected = selectedTab == MainTab.SETTINGS,
                                 onClick = { controller.selectTab(MainTab.SETTINGS) },
                                 icon = Icons.Rounded.Settings,
@@ -204,6 +212,11 @@ class MainActivity : ComponentActivity() {
                             controller = controller
                         )
 
+                        MainTab.EMOJI -> EmojiTab(
+                            scrollBehavior = scrollBehavior,
+                            contentPadding = padding
+                        )
+
                         MainTab.SETTINGS -> SettingsTab(
                             state = uiState,
                             scrollBehavior = scrollBehavior,
@@ -238,6 +251,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 MainTab.OVERLAY.name -> controller.selectTab(MainTab.OVERLAY)
+                MainTab.EMOJI.name -> controller.selectTab(MainTab.EMOJI)
                 MainTab.SETTINGS.name -> controller.selectTab(MainTab.SETTINGS)
                 else -> {
                     controller.selectRuleFilter(RuleTargetFilter.ALL)

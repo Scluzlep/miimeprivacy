@@ -210,6 +210,15 @@ fun OverlayTab(
                     showDivider = true
                 )
 
+                MiSwitchItem(
+                    title = "横屏隐藏",
+                    summary = "横屏时自动隐藏悬浮胶囊",
+                    checked = cfg.hidePillInLandscape,
+                    enabled = cfg.showKeyboardPill,
+                    onCheckedChange = controller::setHidePillInLandscape,
+                    showDivider = true
+                )
+
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()

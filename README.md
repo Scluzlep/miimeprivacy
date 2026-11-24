@@ -1,69 +1,64 @@
 # 米输净盾 (MiImePrivacy)
 
-针对小米生态三款主流中文输入法的 **libxposed API 102** 隐私净化、云输入载荷最小化与模式瞬切模块。
+针对小米生态三款输入法的 **libxposed API 102** 模块，提供隐私净化、云输入字段脱敏、悬浮微胶囊与 Emoji 补全功能。
 
-## 模块定位与边界
+## 模块原则
 
-- **输入法隐私净化，而非粗暴断网阉割**：默认保留用户主动开启的云联想候选与正常词库/字典更新能力，在请求发出前剥离与当前拼音/语音识别无关的上下文、设备指纹与宿主隐私字段。
-- **不破解任何付费特权或会员状态**：不绕过会员付费墙、不读取或导出任何明文密钥或个人历史语料库。
-- **诚实降级与显式诊断**：支持通过 DexKit 动态解析与结构锚点自适应非基准版本；若任意关键 Hook 未匹配，界面会以醒目警告提示并在诊断列表如实呈现 `FAILED` / `DEGRADED` / `FALLBACK`，绝不虚报成功。
+- **保留基础输入体验**：默认保留主动开启的云联想与词库更新，仅在请求前剥离上下文、设备指纹与宿主包名等无关字段。
+- **不做破解与明文读取**：不绕过任何付费墙，不读取、导出密钥或个人历史语料。
+- **诚实展示状态**：支持 DexKit 动态适配非基准版本；任意子 Hook 未命中时界面如实标注 `FAILED` / `DEGRADED` / `FALLBACK`。
 
-## 支持输入法与审计基准版本
+## 支持输入法与基准版本
 
-| 输入法 | 包名 | 审计基准 `versionCode` | 默认状态 |
+| 输入法 | 包名 | 基准 `versionCode` | 默认模式 |
 | :--- | :--- | :--- | :--- |
-| **搜狗输入法小米版** | `com.sohu.inputmethod.sogou.xiaomi` | `20160` | 🟢 云输入（载荷脱敏） |
-| **百度输入法小米版** | `com.baidu.input_mi` | `7108` | 🟢 云输入（载荷脱敏） |
-| **超级小爱输入法** | `com.xiaomi.type` | `21363` | 🟢 云输入（载荷脱敏） |
+| **搜狗输入法小米版** | `com.sohu.inputmethod.sogou.xiaomi` | `20160` | 🟢 云输入 · 字段脱敏 |
+| **百度输入法小米版** | `com.baidu.input_mi` | `7108` | 🟢 云输入 · 字段脱敏 |
+| **超级小爱输入法** | `com.xiaomi.type` | `21363` | 🟢 云输入 · 字段脱敏 |
 
-## 功能矩阵
+## v1.1 隐私规则
 
-| 类别 | 默认状态 | 说明 |
+| 功能项 | 默认状态 | 说明 |
 | :--- | :--- | :--- |
-| **全局与分应用云输入控制** | 开启（附带脱敏） | 支持三家全局一键切纯本地，或按单款输入法设为「跟随全局 / 强制开启 / 强制本地」；关闭云输入不影响字典更新 |
-| **遥测与日志隔离** | 开启 | 拦截搜狗 `kpi2` / `instantpb` / `MutualData` / `TDDiag` / `Alive` 绕过；拦截百度 `sj0.a case 14` 周期上报、明文回传与 `mobile_log_salvage`；修复超级小爱 CTA Fail-Open、`OneTrack` 绕过与密码框先计数缺陷 |
-| **云输入载荷最小化** | 开启 | 剥离聊天上下文 `dialogue`、光标前后 100 字上下文、宿主包名、触控坐标、地理/城市位置及 `IMEI`/`IMSI` 设备标识 |
-| **剪贴板与权限隔离** | 开启 | 保留正常手动粘贴，阻断隐私模式反向落盘、后台静默读取、`cpn` 计数上报及通讯录/短信/全量扫包 |
-| **未签名动态 DEX / 脚本拦截** | 开启 | 拦截搜狗 `hj` 仅 MD5 校验的远端任务 DEX 与百度远端插件/QuickJS 动态执行 |
-| **严格可选开关** | **默认关闭** | 阻断搜狗/百度 HTTPDNS 直连旁路（`MSDKDnsResolver` / `httpsdns.baidu.com`）；阻断超级小爱热词纠错跨应用文本追踪（`HotwordRemoteClient`） |
+| **全局与分应用云开关** | 开启 | 支持三款输入法一键切换纯本地，或按应用单独设「跟随全局 / 开启 / 纯本地」 |
+| **遥测与日志拦截** | 开启 | 拦截搜狗 `kpi2` / `instantpb` / `MutualData` / `Alive`；拦截百度 `sj0.a case 14` 与 `mobile_log_salvage`；修复超级小爱 CTA 绕过与 `OneTrack` `ay`/`av` 埋点拦截 |
+| **云输入载荷脱敏** | 开启 | 剥离聊天对话 `dialogue`、光标前后上下文、宿主包名、触控坐标、定位信息与 `IMEI`/`IMSI` |
+| **剪贴板与权限隔离** | 开启 | 保留正常手动粘贴，阻断隐私模式落盘、后台静默读取、`cpn` 上报及通讯录/短信/应用列表扫描 |
+| **动态 DEX 与脚本拦截** | 开启 | 拦截搜狗 `hj` 远端 DEX 任务与百度远端插件/QuickJS 脚本执行 |
+| **严格可选开关** | **默认关闭** | 阻断搜狗/百度 HTTPDNS 直连；阻断超级小爱热词跨应用追踪 |
 
-## 快捷交互：键盘微胶囊 (`🟢 / 🔒 / 🔴`) 与控制中心磁贴
+## 悬浮微胶囊与快捷磁贴
 
-1. **键盘顶栏角落微胶囊（Option A）**
-   - `🟢`：当前输入法受模块接管且允许云输入（已开启字段脱敏）。
-   - `🔒`：当前输入法受模块接管且处于纯本地离线模式。
-   - `🔴`：当前输入法未接管或存在异常（点击直接打开快捷面板，避免误切换配置）。
-   - **单击**（`🟢 ↔ 🔒`）：瞬切当前输入法的云输入/纯本地状态并实时跨进程同步。
-   - **长按**：弹出浮动快捷面板，提供全局/单输入法开关以及「快捷进入模块主页 ↗」。
-   - **按住拖动**：自由调整悬浮微胶囊在键盘上的偏移位置，按三款输入法独立记忆并支持在 App 内一键重置为 `(12dp, 2dp)`。
-2. **HyperOS 控制中心磁贴**
-   - 从屏幕顶部下拉控制中心 -> 编辑 -> 添加 **「输入法云输入」**（`CloudToggleTileService`），即可随时一键切换全局云输入与纯本地离线状态。
+1. **键盘悬浮胶囊 (`🟢 / 🔒 / 🔴`)**
+   - `🟢`：已接管，云输入开启并脱敏。
+   - `🔒`：已接管，纯本地离线模式。
+   - `🔴`：未接管或规则异常，点击直接弹出面板。
+   - **单击**：在云输入与纯本地间切换。
+   - **长按**：弹出快捷面板，可开关接管、云输入、上下文脱敏与剪贴板保护，或直接进入设置页。
+   - **拖动与显示**：支持全屏宽度自由拖动（含右侧边缘），不透明度支持 `10%–100%` 调节，默认横屏自动隐藏，各输入法独立记忆偏移量。
+2. **控制中心磁贴**
+   - 在 HyperOS 控制中心编辑中添加「输入法云输入」，即可随时全局切换纯本地状态。
 
-## Miuix + 莫奈动态取色 UI
+## Emoji 补全（搜狗 / 百度）
 
-应用采用 `top.yukonga.miuix.kmp:miuix-ui-android:0.9.0` 原生组件体系构建 4 个控制中心页面：
+在「表情」页面可拉取并缓存 Noto Emoji `v2.051` 与 `unicode.org` `emoji-test.txt`（支持导入本地 ZIP、按系统字体过滤未支持字形，通过只读 `FileProvider` 授权给目标输入法）：
 
-- **总览**：`XposedService` 绑定状态（API `102`、`RemotePreferences` 实时同步状态、运行中目标进程列表）、一键申请作用域、热重载运行中模块、全局云输入开关、会话累计拦截计数与三家输入法独立卡片。
-- **净化**：分功能组切换全部隐私净化开关，提供可按输入法筛选的逐条 Hook 真实命中诊断视图（`ACTIVE FastPath` / `DEXKIT` / `FALLBACK` / `DEGRADED` / `FAILED` / `SKIPPED` + 真实匹配签名与计数）。
-- **挂件**：微胶囊实时预览（可切换预览 `🟢`/`🔒`/`🔴` 与不透明度 25%–100%）、各输入法 X/Y 偏移量重置与控制中心磁贴添加引导。
-- **外观与关于**：支持切换主题模式（跟随系统 / 浅色 / 深色）、莫奈动态取色开关（Android 12+）以及 9 种 `MonetPaletteStyle`（`TonalSpot`、`Neutral`、`Vibrant`、`Expressive` 等）并实时预览色板，关闭莫奈时使用 HyperOS `#007DFF` 主题色。
+- **搜狗输入法小米版**：集成 `SougouEmojiFixer` 补全方案、双肤色 5x5 选色弹窗 Hook、分组排序保存，并在安装前保留原始词库备份以支持一键恢复。
+- **百度输入法小米版**：原生内置仅 Emoji 5.0，支持生成 UTF-16LE Emoji 库与 9 组 `emojigroup`、保留原有 SoftBank PUA 映射与中文名、适配单肤色矩阵，并支持恢复默认。
+- **超级小爱输入法**：原生已内置 Emoji 16.0（共 1901 项）且由系统字体直出，无需补全。
 
-## 本地构建与 Release 签名校验
+## 界面与本地构建
 
-### 本地测试与 Debug 构建
+应用基于 `top.yukonga.miuix.kmp:miuix-ui-android:0.9.0` 与莫奈动态取色，包含 **总览**、**规则**、**胶囊**、**表情**、**设置** 五个页面。
 
 ```bash
-./gradlew :app:testDebugUnitTest :app:assembleDebug
+./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 ```
 
-要求：`JDK 21`、`compileSdk 37`（Android 37 SDK / Build-Tools `37.0.0`）、Gradle `9.7.0`。
+构建环境：`JDK 21`、`compileSdk 37`、Build-Tools `37.0.0`、Gradle `9.7.0`。
 
-### CI 发布与 `android-sig` 签名校验
-
-GitHub Actions 工作流（[`.github/workflows/build-release.yml`](.github/workflows/build-release.yml)）在 `check` 阶段校验单元测试、`META-INF/xposed/*` 纯 LF 换行与 API 102 元数据、`libdexkit.so` 多 ABI 动态库打包（`arm64-v8a` / `armeabi-v7a` 非空且 `android:extractNativeLibs=true`）及清单组件（`LAUNCHER`、`XposedProvider`、`CloudToggleTileService` 且无 `xposedminversion`）；打 `v*` 标签或手动触发发布时自动 `zipalign` 并使用 SigHelper PKCS#12 密钥签名生成 `miimeprivacy-<tag>.apk` 与 `SHA256SUMS.txt`。
-
-校验已发布的 Release APK 签名：
+校验已发布 APK 签名：
 
 ```bash
-android-sig veri <owner>/<repo> --apk miimeprivacy-<tag>.apk
+android-sig veri Scluzlep/miimeprivacy --apk miimeprivacy-<tag>.apk
 ```

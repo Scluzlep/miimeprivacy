@@ -25,6 +25,7 @@ enum class MainTab(val title: String) {
     OVERVIEW("总览"),
     RULES("规则"),
     OVERLAY("胶囊"),
+    EMOJI("表情"),
     SETTINGS("设置")
 }
 
@@ -489,6 +490,10 @@ class PrivacyUiController(context: Context) {
 
     fun setShowKeyboardPill(enabled: Boolean) {
         XposedServiceManager.updateConfig { it.copy(showKeyboardPill = enabled) }
+    }
+
+    fun setHidePillInLandscape(enabled: Boolean) {
+        XposedServiceManager.updateConfig { it.copy(hidePillInLandscape = enabled) }
     }
 
     fun setPillAlpha(alpha: Float) {

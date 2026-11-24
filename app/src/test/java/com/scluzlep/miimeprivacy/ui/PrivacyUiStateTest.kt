@@ -17,6 +17,7 @@ import com.scluzlep.miimeprivacy.ui.theme.resolveColorSchemeMode
 import com.scluzlep.miimeprivacy.ui.theme.themeModeLabel
 import com.scluzlep.miimeprivacy.ui.theme.toMiuixPaletteStyle
 import com.scluzlep.miimeprivacy.ui.viewmodel.InstalledImeInfo
+import com.scluzlep.miimeprivacy.ui.viewmodel.MainTab
 import com.scluzlep.miimeprivacy.ui.viewmodel.PillVisualState
 import com.scluzlep.miimeprivacy.ui.viewmodel.PrivacyUiStateBuilder
 import com.scluzlep.miimeprivacy.ui.viewmodel.RuleHealthSeverity
@@ -252,5 +253,11 @@ class PrivacyUiStateTest {
         val xiaoaiHotword = state.ruleItems.first { it.spec.ruleId == HookRuleCatalog.RULE_XIAOAI_HOTWORD_TRACKER }
         // xiaoaiManaged is false, so switchEnabled is false even though blockXiaoAiHotwordTracker is true
         assertFalse(xiaoaiHotword.switchEnabled)
+
+        assertEquals(
+            listOf("总览", "规则", "胶囊", "表情", "设置"),
+            MainTab.entries.map { it.title }
+        )
+        assertTrue(PrivacyConfig().hidePillInLandscape)
     }
 }
