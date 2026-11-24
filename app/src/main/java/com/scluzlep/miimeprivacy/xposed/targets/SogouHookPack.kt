@@ -9,6 +9,7 @@ import android.os.Looper
 import com.scluzlep.miimeprivacy.config.PrivacyConfig
 import com.scluzlep.miimeprivacy.model.HookMatchStatus
 import com.scluzlep.miimeprivacy.model.HookRuleCatalog
+import com.scluzlep.miimeprivacy.model.HookRuleReport
 import com.scluzlep.miimeprivacy.model.ImeTarget
 import com.scluzlep.miimeprivacy.xposed.ConfigBridge
 import com.scluzlep.miimeprivacy.xposed.HookRegistry
@@ -21,6 +22,7 @@ import io.github.libxposed.api.XposedInterface
 import org.luckypray.dexkit.DexKitBridge
 import org.luckypray.dexkit.query.FindClass
 import org.luckypray.dexkit.query.FindMethod
+import org.luckypray.dexkit.query.enums.StringMatchType
 import org.luckypray.dexkit.query.matchers.ClassMatcher
 import org.luckypray.dexkit.query.matchers.MethodMatcher
 import java.lang.reflect.Field
@@ -56,11 +58,11 @@ object SogouHookPack : ImeHookPack {
     @Volatile
     private var cachedImeUiRefs: ImeUiRefs? = null
 
-    private class CloudMgrRefs(clazz: Class<*>) {
+    internal class CloudMgrRefs(clazz: Class<*>, j2Class: Class<*>?) {
         val fieldZ: Field? = findField(clazz, "z")
         val fieldM: Field? = findField(clazz, "m")
         val fieldX: Field? = findField(clazz, "x")
-        val fieldJ2: Field? = findField(clazz, "j2")
+        val fieldJ2C0: Field? = j2Class?.let { findField(it, "C0") }
         val methodO: Method? = SymbolResolver.findDeclaredMethodOrNull(clazz, "o")
         val methodH1: Method? = SymbolResolver.findDeclaredMethodOrNull(clazz, "h1")
         val methodV0: Method? = SymbolResolver.findDeclaredMethodOrNull(clazz, "V0")
@@ -85,56 +87,121 @@ object SogouHookPack : ImeHookPack {
         }
     }
 
-    private class RuleStats {
+    internal class RuleStats {
         var installed = 0
         var failed = 0
         var primaryInstalled = 0
         var usedFallback = false
+        private var primaryMatchedMethod: String? = null
+        private var primarySource: String? = null
+        private var lastMatchedMethod: String? = null
+        private var lastSource: String? = null
         val details = mutableListOf<String>()
 
         fun record(
+            registry: HookRegistry,
+            ruleId: String,
             hookName: String,
             result: ResolveResult<*>,
             hooked: Boolean,
             primary: Boolean = false
         ) {
-            if (hooked) {
-                installed++
-                if (primary) primaryInstalled++
-                if (result.source != ResolveSource.FAST_PATH) {
-                    usedFallback = true
-                }
-            } else {
-                failed++
-                details.add("miss:$hookName")
-            }
+            val report = if (hooked) registry.getReport(ruleId) else null
+            recordOutcome(
+                hookName = hookName,
+                source = result.source,
+                count = if (hooked) 1 else 0,
+                matchedMethod = report?.matchedMethod,
+                reportedSource = report?.source,
+                primary = primary
+            )
         }
 
-        fun recordCount(hookName: String, source: ResolveSource, count: Int, primary: Boolean = false) {
+        fun recordCount(
+            registry: HookRegistry,
+            ruleId: String,
+            hookName: String,
+            source: ResolveSource,
+            count: Int,
+            primary: Boolean = false
+        ) {
+            val report = if (count > 0) registry.getReport(ruleId) else null
+            recordOutcome(
+                hookName = hookName,
+                source = source,
+                count = count,
+                matchedMethod = report?.matchedMethod,
+                reportedSource = report?.source,
+                primary = primary
+            )
+        }
+
+        internal fun recordOutcome(
+            hookName: String,
+            source: ResolveSource,
+            count: Int,
+            matchedMethod: String?,
+            reportedSource: String? = null,
+            primary: Boolean = false
+        ) {
             if (count > 0) {
                 installed += count
                 if (primary) primaryInstalled += count
                 if (source != ResolveSource.FAST_PATH) {
                     usedFallback = true
                 }
+                val sig = matchedMethod?.takeIf { it.isNotBlank() }
+                val srcName = reportedSource?.takeIf { it.isNotBlank() } ?: source.name
+                if (sig != null) {
+                    lastMatchedMethod = sig
+                    lastSource = srcName
+                    if (primary && primaryMatchedMethod == null) {
+                        primaryMatchedMethod = sig
+                        primarySource = srcName
+                    }
+                }
             } else {
                 failed++
                 details.add("miss:$hookName")
             }
         }
 
-        fun finalizeRule(registry: HookRegistry, ruleId: String, summaryPrefix: String) {
+        internal fun buildFinalReport(
+            existing: HookRuleReport?,
+            ruleId: String,
+            summaryPrefix: String
+        ): HookRuleReport {
             val status = when {
                 installed == 0 || primaryInstalled == 0 -> HookMatchStatus.FAILED
                 failed > 0 -> HookMatchStatus.DEGRADED
                 usedFallback -> HookMatchStatus.FALLBACK
                 else -> HookMatchStatus.ACTIVE
             }
+            val matchedMethod = primaryMatchedMethod?.takeIf { it.isNotBlank() }
+                ?: lastMatchedMethod?.takeIf { it.isNotBlank() }
+                ?: existing?.matchedMethod.orEmpty()
+            val source = primarySource?.takeIf { it.isNotBlank() }
+                ?: lastSource?.takeIf { it.isNotBlank() }
+                ?: existing?.source.orEmpty()
             val missing = if (details.isEmpty()) "" else "; ${details.joinToString(",")}"
-            registry.reportRule(
+            return HookRuleReport(
                 ruleId = ruleId,
                 status = status,
+                matchedMethod = matchedMethod,
+                source = source,
+                blockedCount = existing?.blockedCount ?: 0L,
                 detail = "$summaryPrefix installed=$installed failed=$failed$missing"
+            )
+        }
+
+        fun finalizeRule(registry: HookRegistry, ruleId: String, summaryPrefix: String) {
+            val report = buildFinalReport(registry.getReport(ruleId), ruleId, summaryPrefix)
+            registry.reportRule(
+                ruleId = report.ruleId,
+                status = report.status,
+                matchedMethod = report.matchedMethod,
+                source = report.source,
+                detail = report.detail
             )
         }
     }
@@ -186,7 +253,15 @@ object SogouHookPack : ImeHookPack {
             cacheKey = "sogou.alive.a",
             fastPathCandidates = listOf("com.sogou.alive.a"),
             dexKitFinder = { dk ->
-                findClassByStrings(dk, "com.sogou.lib.device.settings.a")
+                dk.findClass(
+                    FindClass.create()
+                        .searchPackages("com.sogou.alive")
+                        .matcher(
+                            ClassMatcher.create()
+                                .addMethod(MethodMatcher.create().returnType("boolean").paramTypes("java.lang.String"))
+                                .addMethod(MethodMatcher.create().returnType("boolean").paramTypes("okhttp3.z"))
+                        )
+                ).firstOrNull()?.descriptor
             }
         )
         hookResolvedMethod(
@@ -356,7 +431,18 @@ object SogouHookPack : ImeHookPack {
             cacheKey = "sogou.launch.d_d",
             fastPathCandidates = listOf("com.sohu.inputmethod.sogou.launch.d\$d"),
             dexKitFinder = { dk ->
-                findClassByStrings(dk, "S-COOKIE", "com.sohu.inputmethod.sogou.launch.d")
+                dk.findClass(
+                    FindClass.create()
+                        .searchPackages("com.sohu.inputmethod.sogou.launch")
+                        .matcher(ClassMatcher.create().addInterface("com.sogou.networking.reporter.okhttp.a"))
+                ).firstOrNull()?.descriptor
+            },
+            structuralFallback = { cl ->
+                val outer = SymbolResolver.loadClassOrNull("com.sohu.inputmethod.sogou.launch.d", cl)
+                val iface = SymbolResolver.loadClassOrNull("com.sogou.networking.reporter.okhttp.a", cl)
+                outer?.declaredClasses?.firstOrNull { inner ->
+                    iface != null && iface.isAssignableFrom(inner)
+                }
             }
         )
         hookResolvedMethod(
@@ -487,7 +573,8 @@ object SogouHookPack : ImeHookPack {
         )
         val cloudMgrCls = cloudMgrRes.value
         if (cloudMgrCls != null) {
-            cachedCloudMgrRefs = CloudMgrRefs(cloudMgrCls)
+            val j2Class = SymbolResolver.loadClassOrNull("com.sohu.inputmethod.sogou.settings.j2", classLoader)
+            cachedCloudMgrRefs = CloudMgrRefs(cloudMgrCls, j2Class)
             val refs = cachedCloudMgrRefs!!
 
             listOf(
@@ -578,7 +665,7 @@ object SogouHookPack : ImeHookPack {
                 }
             )
         } else {
-            stats.record("cloud_mgr_class", cloudMgrRes, hooked = false)
+            stats.record(registry, ruleId, "cloud_mgr_class", cloudMgrRes, hooked = false)
         }
 
         registerLiveCloudConfigListener(registry)
@@ -833,7 +920,7 @@ object SogouHookPack : ImeHookPack {
         ConfigBridge.addListener(listener)
     }
 
-    private fun stopCloudMgrLocked(cloudMgrObj: Any?, refs: CloudMgrRefs) {
+    internal fun stopCloudMgrLocked(cloudMgrObj: Any?, refs: CloudMgrRefs) {
         if (cloudMgrObj == null) return
         runCatching {
             if (refs.methodH1 != null) {
@@ -841,10 +928,7 @@ object SogouHookPack : ImeHookPack {
             } else {
                 refs.methodV0?.invoke(cloudMgrObj)
                 refs.methodV?.invoke(cloudMgrObj)
-                val j2Obj = refs.fieldJ2?.get(cloudMgrObj)
-                if (j2Obj != null) {
-                    findField(j2Obj.javaClass, "C0")?.setBoolean(j2Obj, false)
-                }
+                refs.fieldJ2C0?.setBoolean(null, false)
             }
             refs.fieldX?.setBoolean(cloudMgrObj, false)
         }
@@ -905,7 +989,21 @@ object SogouHookPack : ImeHookPack {
         val whiteDogRes = resolver.resolveClass(
             cacheKey = "sogou.whitedog.step.f",
             fastPathCandidates = listOf("com.sogou.lib.whitedog.step.f"),
-            dexKitFinder = { dk -> findClassByStrings(dk, "InputCollectorCommons") }
+            dexKitFinder = { dk ->
+                dk.findClass(
+                    FindClass.create()
+                        .searchPackages("com.sogou.lib.whitedog")
+                        .matcher(
+                            ClassMatcher.create().addMethod(
+                                MethodMatcher.create().paramTypes(
+                                    "java.lang.String",
+                                    "com.sogou.lib.whitedog.step.InputCollectorCommons\$InputCollectorPrepareStep",
+                                    "java.lang.Object[]"
+                                )
+                            )
+                        )
+                ).firstOrNull()?.descriptor
+            }
         )
         listOf("r", "g", "x").forEach { mName ->
             hookClassMethodsByName(
@@ -1626,7 +1724,7 @@ object SogouHookPack : ImeHookPack {
             onFailureStatus = if (primary) HookMatchStatus.FAILED else HookMatchStatus.DEGRADED,
             hooker = hooker
         )
-        stats.record(hookId, resolved, hooked, primary)
+        stats.record(registry, ruleId, hookId, resolved, hooked, primary)
     }
 
     private fun hookClassMethodsByName(
@@ -1648,7 +1746,7 @@ object SogouHookPack : ImeHookPack {
             priority = XposedInterface.PRIORITY_DEFAULT,
             hooker = hooker
         )
-        stats.recordCount(hookIdPrefix, classResult.source, count, primary)
+        stats.recordCount(registry, ruleId, hookIdPrefix, classResult.source, count, primary)
     }
 
     private fun voidNoOpHooker(
@@ -1704,7 +1802,7 @@ object SogouHookPack : ImeHookPack {
         return dk.findClass(
             FindClass.create()
                 .searchPackages(*SEARCH_PACKAGES)
-                .matcher(ClassMatcher.create().usingStrings(*strings))
+                .matcher(ClassMatcher.create().usingStrings(strings.toList(), StringMatchType.Contains))
         ).firstOrNull()?.descriptor
     }
 
@@ -1715,7 +1813,7 @@ object SogouHookPack : ImeHookPack {
         paramTypes: Array<String>? = null,
         strings: Array<String>
     ): String? {
-        val matcher = MethodMatcher.create().usingStrings(*strings)
+        val matcher = MethodMatcher.create().usingStrings(strings.toList(), StringMatchType.Contains)
         if (returnType != null) matcher.returnType(returnType)
         if (paramCount != null) matcher.paramCount(paramCount)
         if (paramTypes != null) matcher.paramTypes(*paramTypes)

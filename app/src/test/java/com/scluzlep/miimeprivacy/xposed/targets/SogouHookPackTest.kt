@@ -2,9 +2,12 @@ package com.scluzlep.miimeprivacy.xposed.targets
 
 import com.scluzlep.miimeprivacy.config.CloudOverride
 import com.scluzlep.miimeprivacy.config.PrivacyConfig
+import com.scluzlep.miimeprivacy.model.HookMatchStatus
 import com.scluzlep.miimeprivacy.model.HookRuleCatalog
+import com.scluzlep.miimeprivacy.model.HookRuleReport
 import com.scluzlep.miimeprivacy.model.ImeTarget
 import com.scluzlep.miimeprivacy.xposed.ConfigBridge
+import com.scluzlep.miimeprivacy.xposed.ResolveSource
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -378,5 +381,115 @@ class SogouHookPackTest {
         assertFalse(forceOff.effectiveCloudEnabled(ImeTarget.SOGOU))
         assertTrue(forceOn.effectiveCloudEnabled(ImeTarget.SOGOU))
         assertEquals(ImeTarget.SOGOU, SogouHookPack.target)
+    }
+
+    @Test
+    fun ruleStats_preservesMatchedMethodAndSource_acrossFinalization() {
+        // 1. Primary FAST_PATH succeeds + secondary misses -> DEGRADED, preserves primary signature & source
+        val degradedStats = SogouHookPack.RuleStats()
+        degradedStats.recordOutcome(
+            hookName = "cloud_body_builder_b_h",
+            source = ResolveSource.FAST_PATH,
+            count = 1,
+            matchedMethod = "com.sohu.inputmethod.sogou.cloud.b#h(CloudRequestInfo, Context)",
+            reportedSource = ResolveSource.FAST_PATH.name,
+            primary = true
+        )
+        degradedStats.recordOutcome(
+            hookName = "optional_secondary",
+            source = ResolveSource.MISS,
+            count = 0,
+            matchedMethod = null,
+            primary = false
+        )
+        val existingDegraded = HookRuleReport(
+            ruleId = HookRuleCatalog.RULE_SOGOU_CLOUD_SANITIZE,
+            status = HookMatchStatus.DEGRADED,
+            matchedMethod = "",
+            source = "",
+            blockedCount = 3L,
+            detail = "missing optional_secondary"
+        )
+        val degradedReport = degradedStats.buildFinalReport(
+            existing = existingDegraded,
+            ruleId = HookRuleCatalog.RULE_SOGOU_CLOUD_SANITIZE,
+            summaryPrefix = "CloudSanitize"
+        )
+        assertEquals(HookMatchStatus.DEGRADED, degradedReport.status)
+        assertEquals("com.sohu.inputmethod.sogou.cloud.b#h(CloudRequestInfo, Context)", degradedReport.matchedMethod)
+        assertEquals(ResolveSource.FAST_PATH.name, degradedReport.source)
+        assertEquals(3L, degradedReport.blockedCount)
+
+        // 2. Primary resolved via DEXKIT -> FALLBACK, preserves DEXKIT source & matchedMethod
+        val fallbackStats = SogouHookPack.RuleStats()
+        fallbackStats.recordOutcome(
+            hookName = "alive_strategy_a",
+            source = ResolveSource.DEXKIT,
+            count = 1,
+            matchedMethod = "com.sogou.alive.strategy.a#a()",
+            reportedSource = ResolveSource.DEXKIT.name,
+            primary = true
+        )
+        val fallbackReport = fallbackStats.buildFinalReport(
+            existing = null,
+            ruleId = HookRuleCatalog.RULE_SOGOU_PRIVACY_GATE,
+            summaryPrefix = "PrivacyGate"
+        )
+        assertEquals(HookMatchStatus.FALLBACK, fallbackReport.status)
+        assertEquals("com.sogou.alive.strategy.a#a()", fallbackReport.matchedMethod)
+        assertEquals(ResolveSource.DEXKIT.name, fallbackReport.source)
+
+        // 3. All primary hooks miss while secondary succeeds -> FAILED
+        val failedStats = SogouHookPack.RuleStats()
+        failedStats.recordOutcome(
+            hookName = "primary_miss",
+            source = ResolveSource.MISS,
+            count = 0,
+            matchedMethod = null,
+            primary = true
+        )
+        failedStats.recordOutcome(
+            hookName = "secondary_hit",
+            source = ResolveSource.FAST_PATH,
+            count = 1,
+            matchedMethod = "Helper#x()",
+            primary = false
+        )
+        val failedReport = failedStats.buildFinalReport(
+            existing = null,
+            ruleId = HookRuleCatalog.RULE_SOGOU_PRIVACY_GATE,
+            summaryPrefix = "PrivacyGate"
+        )
+        assertEquals(HookMatchStatus.FAILED, failedReport.status)
+        assertEquals("Helper#x()", failedReport.matchedMethod)
+    }
+
+    class FakeStaticJ2 {
+        companion object {
+            @JvmField
+            var C0: Boolean = true
+        }
+    }
+
+    class FakeLegacyCloudMgr {
+        @JvmField var x: Boolean = true
+        var v0Called = false
+        var vCalled = false
+        fun V0() { v0Called = true }
+        fun v() { vCalled = true }
+    }
+
+    @Test
+    fun stopCloudMgrLocked_clearsStaticJ2C0_andResetsStateX() {
+        FakeStaticJ2.C0 = true
+        val mgr = FakeLegacyCloudMgr()
+        val refs = SogouHookPack.CloudMgrRefs(FakeLegacyCloudMgr::class.java, FakeStaticJ2::class.java)
+
+        SogouHookPack.stopCloudMgrLocked(mgr, refs)
+
+        assertTrue(mgr.v0Called)
+        assertTrue(mgr.vCalled)
+        assertFalse(FakeStaticJ2.C0)
+        assertFalse(mgr.x)
     }
 }
