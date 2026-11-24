@@ -14,6 +14,9 @@ import com.scluzlep.miimeprivacy.xposed.ImeHookPack
 import com.scluzlep.miimeprivacy.xposed.ImePackInstallResult
 import com.scluzlep.miimeprivacy.xposed.ResolveResult
 import com.scluzlep.miimeprivacy.xposed.SymbolResolver
+import org.luckypray.dexkit.DexKitBridge
+import org.luckypray.dexkit.query.matchers.MethodMatcher
+import java.lang.reflect.Array as JvmArray
 import java.lang.reflect.Constructor
 import java.lang.reflect.Field
 import java.lang.reflect.Method
@@ -81,7 +84,10 @@ object BaiduHookPack : ImeHookPack {
             dexKitFinder = { bridge ->
                 bridge.findMethod {
                     matcher {
-                        usingStrings("PrivacyDialogUtils.java")
+                        declaredClass {
+                            usingStrings("PrivacyDialogUtils.java")
+                        }
+                        usingNumbers(2439)
                         returnType("boolean")
                         paramCount(0)
                     }
@@ -102,6 +108,19 @@ object BaiduHookPack : ImeHookPack {
             fastPath = { cl ->
                 SymbolResolver.loadClassOrNull("tn0.e", cl)
                     ?.let { SymbolResolver.findDeclaredMethodOrNull(it, "isPrivacyAgreed") }
+            },
+            dexKitFinder = { bridge ->
+                bridge.findMethod {
+                    matcher {
+                        declaredClass {
+                            addInterface("ll.a")
+                            usingStrings("An operation is not implemented: Not yet implemented")
+                        }
+                        name = "isPrivacyAgreed"
+                        returnType("boolean")
+                        paramCount(0)
+                    }
+                }.singleOrNull()?.descriptor
             }
         )
         registry.hookExecutable(
@@ -129,6 +148,19 @@ object BaiduHookPack : ImeHookPack {
                 fastPath = { cl ->
                     SymbolResolver.loadClassOrNull("com.baidu.ubc.UBCHelper", cl)
                         ?.let { SymbolResolver.findDeclaredMethodOrNull(it, "isAgreePrivacy") }
+                },
+                dexKitFinder = { bridge ->
+                    bridge.findMethod {
+                        searchPackages("com.baidu.ubc")
+                        matcher {
+                            declaredClass {
+                                usingStrings("https://tcbox.baidu.com/ztbox?action=zubc")
+                            }
+                            name = "isAgreePrivacy"
+                            returnType("boolean")
+                            paramCount(0)
+                        }
+                    }.singleOrNull()?.descriptor
                 }
             ),
             shouldBlock = { isRuleFlagEnabled { it.blockTelemetry } },
@@ -156,7 +188,24 @@ object BaiduHookPack : ImeHookPack {
                 cacheKey = "baidu:dj0_y_h",
                 clazz = settingsClass,
                 methodName = "h",
-                Int::class.javaPrimitiveType!!
+                Int::class.javaPrimitiveType!!,
+                dexKitFinder = { bridge ->
+                    bridge.findMethod {
+                        matcher {
+                            declaredClass {
+                                usingStrings("option_log", "Option is empty, reset default setting")
+                            }
+                            paramTypes("int")
+                            returnType("boolean")
+                            addInvoke(
+                                MethodMatcher().apply {
+                                    paramTypes("int", "boolean")
+                                    returnType("boolean")
+                                }
+                            )
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             )
         ) { chain ->
             val prefKey = (chain.getArg(0) as? Int) ?: -1
@@ -181,7 +230,18 @@ object BaiduHookPack : ImeHookPack {
                 clazz = settingsClass,
                 methodName = "A",
                 Int::class.javaPrimitiveType!!,
-                Boolean::class.javaPrimitiveType!!
+                Boolean::class.javaPrimitiveType!!,
+                dexKitFinder = { bridge ->
+                    bridge.findMethod {
+                        matcher {
+                            declaredClass {
+                                usingStrings("option_log", "Option is empty, reset default setting")
+                            }
+                            paramTypes("int", "boolean")
+                            returnType("void")
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             ),
             onFailureStatus = HookMatchStatus.DEGRADED
         ) { chain ->
@@ -268,7 +328,15 @@ object BaiduHookPack : ImeHookPack {
         // 3) com.baidu.ubc.BehaviorUploader#obUploadDataRequest & uploadDataRequest overloads.
         val ubcUploaderResult = resolver.resolveClass(
             cacheKey = "baidu:behavior_uploader",
-            fastPathCandidates = listOf("com.baidu.ubc.BehaviorUploader")
+            fastPathCandidates = listOf("com.baidu.ubc.BehaviorUploader"),
+            dexKitFinder = { bridge ->
+                bridge.findClass {
+                    searchPackages("com.baidu.ubc")
+                    matcher {
+                        usingStrings("CRONET")
+                    }
+                }.singleOrNull()?.descriptor
+            }
         )
         val uploaderCls = ubcUploaderResult.value
         for (methodName in listOf("obUploadDataRequest", "uploadDataRequest")) {
@@ -291,7 +359,15 @@ object BaiduHookPack : ImeHookPack {
         // 4) com.baidu.mobstat.LogSender#saveLogData(Context, String, boolean)
         val logSenderClass = resolver.resolveClass(
             cacheKey = "baidu:mobstat_log_sender",
-            fastPathCandidates = listOf("com.baidu.mobstat.LogSender")
+            fastPathCandidates = listOf("com.baidu.mobstat.LogSender"),
+            dexKitFinder = { bridge ->
+                bridge.findClass {
+                    searchPackages("com.baidu.mobstat")
+                    matcher {
+                        usingStrings("__track_send_data_")
+                    }
+                }.singleOrNull()?.descriptor
+            }
         ).value
         hookSimpleBlock(
             registry = registry,
@@ -304,12 +380,25 @@ object BaiduHookPack : ImeHookPack {
                 methodName = "saveLogData",
                 Context::class.java,
                 String::class.java,
-                Boolean::class.javaPrimitiveType!!
+                Boolean::class.javaPrimitiveType!!,
+                dexKitFinder = { bridge ->
+                    bridge.findMethod {
+                        searchPackages("com.baidu.mobstat")
+                        matcher {
+                            usingStrings("__track_send_data_")
+                            paramTypes("android.content.Context", "java.lang.String", "boolean")
+                            returnType("void")
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             ),
             shouldBlock = { isRuleFlagEnabled { it.blockTelemetry } },
             blockedResult = { null }
         )
-        if (logSenderClass != null && logSenderClass.declaredMethods.any { it.name == "onSend" }) {
+        val hasOnSend = logSenderClass != null && runCatching {
+            logSenderClass.declaredMethods.any { it.name == "onSend" }
+        }.getOrDefault(false)
+        if (hasOnSend) {
             registry.hookAllMethods(
                 ruleId = ruleId,
                 hookIdPrefix = "baidu.telemetry.mobstat_on_send",
@@ -487,7 +576,19 @@ object BaiduHookPack : ImeHookPack {
                 methodName = "c",
                 String::class.java,
                 CharSequence::class.java,
-                CharSequence::class.java
+                CharSequence::class.java,
+                dexKitFinder = { bridge ->
+                    bridge.findMethod {
+                        searchPackages("com.baidu.input.ime.voicerecognize.voicetrace")
+                        matcher {
+                            declaredClass {
+                                usingStrings("wufeiyang")
+                            }
+                            paramTypes("java.lang.String", "java.lang.CharSequence", "java.lang.CharSequence")
+                            returnType("void")
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             ),
             shouldBlock = {
                 isRuleFlagEnabled { it.stripCursorContext } || !ConfigBridge.isCloudEnabled(ImeTarget.BAIDU)
@@ -562,7 +663,7 @@ object BaiduHookPack : ImeHookPack {
                 bridge.findClass {
                     searchPackages("com.baidu.input.aicard.impl.uploader")
                     matcher {
-                        usingStrings("wenXinData")
+                        usingStrings("WenxinDataUploader.kt", "wenXinData")
                     }
                 }.singleOrNull()?.descriptor
             }
@@ -575,12 +676,32 @@ object BaiduHookPack : ImeHookPack {
                 hookId = "baidu.cloud.wenxin_uploader_$methodName",
                 resolveResult = resolver.resolveMethod(
                     cacheKey = "baidu:wenxin_uploader_$methodName",
-                    fastPath = { _ ->
-                        wenxinUploaderClass?.declaredMethods?.singleOrNull {
-                            it.name == methodName &&
-                                it.parameterCount == 1 &&
-                                it.returnType == Void.TYPE
+                    fastPath = { cl ->
+                        val paramCls = SymbolResolver.loadClassOrNull("pg.b", cl) ?: return@resolveMethod null
+                        wenxinUploaderClass?.let {
+                            SymbolResolver.findDeclaredMethodOrNull(it, methodName, paramCls)
                         }
+                    },
+                    dexKitFinder = { bridge ->
+                        bridge.findMethod {
+                            searchPackages("com.baidu.input.aicard.impl.uploader")
+                            matcher {
+                                declaredClass {
+                                    usingStrings("WenxinDataUploader.kt")
+                                }
+                                if (methodName == "h") {
+                                    usingStrings("wenXinData", "uploadFailedDatas.iterator()")
+                                } else {
+                                    addCaller(
+                                        MethodMatcher().apply {
+                                            usingStrings("wenXinData", "uploadFailedDatas.iterator()")
+                                        }
+                                    )
+                                }
+                                paramCount(1)
+                                returnType("void")
+                            }
+                        }.singleOrNull()?.descriptor
                     }
                 ),
                 shouldBlock = {
@@ -678,6 +799,17 @@ object BaiduHookPack : ImeHookPack {
                 fastPath = { cl ->
                     SymbolResolver.loadClassOrNull("wg0.b", cl)
                         ?.let { SymbolResolver.findDeclaredMethodOrNull(it, "u", ContextWrapper::class.java) }
+                },
+                dexKitFinder = { bridge ->
+                    bridge.findMethod {
+                        matcher {
+                            declaredClass {
+                                usingStrings("mms_is_ververification_code")
+                            }
+                            paramTypes("android.content.ContextWrapper")
+                            returnType("java.lang.CharSequence")
+                        }
+                    }.singleOrNull()?.descriptor
                 }
             ),
             shouldBlock = ::isBlockedPrivacyClipboard,
@@ -687,12 +819,21 @@ object BaiduHookPack : ImeHookPack {
         // 3) bl.c#K1():XiaoMiClipData (returns empty XiaoMiClipData cleanly without touching clipboard)
         val blClass = resolver.resolveClass(
             cacheKey = "baidu:bl_c_class",
-            fastPathCandidates = listOf("bl.c")
+            fastPathCandidates = listOf("bl.c"),
+            dexKitFinder = { bridge ->
+                bridge.findClass {
+                    matcher {
+                        usingStrings("ImeInspirationCorpusDependencyImpl.kt")
+                    }
+                }.singleOrNull()?.descriptor
+            }
         ).value
         val blContextField: Field? = blClass?.superclass?.let { parent ->
             findDeclaredFieldOrNull(parent, "a")
-                ?: parent.declaredFields.firstOrNull { ContextWrapper::class.java.isAssignableFrom(it.type) }
-                    ?.apply { isAccessible = true }
+                ?: runCatching {
+                    parent.declaredFields.firstOrNull { ContextWrapper::class.java.isAssignableFrom(it.type) }
+                        ?.apply { isAccessible = true }
+                }.getOrNull()
         }
         val xiaoMiClipCtor: Constructor<*>? = SymbolResolver.loadClassOrNull(
             "com.baidu.input.inspiration_corpus.api.XiaoMiClipData",
@@ -706,7 +847,24 @@ object BaiduHookPack : ImeHookPack {
         registry.hookExecutable(
             ruleId = ruleId,
             hookId = "baidu.clipboard.bl_capture_k1",
-            resolveResult = resolveMethodOnClass(resolver, "baidu:bl_c_k1", blClass, "K1")
+            resolveResult = resolveMethodOnClass(
+                resolver = resolver,
+                cacheKey = "baidu:bl_c_k1",
+                clazz = blClass,
+                methodName = "K1",
+                dexKitFinder = { bridge ->
+                    bridge.findMethod {
+                        matcher {
+                            declaredClass {
+                                usingStrings("ImeInspirationCorpusDependencyImpl.kt")
+                            }
+                            usingStrings("text/html")
+                            paramCount(0)
+                            returnType("com.baidu.input.inspiration_corpus.api.XiaoMiClipData")
+                        }
+                    }.singleOrNull()?.descriptor
+                }
+            )
         ) { chain ->
             if (!isBlockedPrivacyClipboard()) {
                 return@hookExecutable chain.proceed()
@@ -739,6 +897,13 @@ object BaiduHookPack : ImeHookPack {
                         matcher {
                             returnType("boolean")
                             paramCount(0)
+                            addInvoke(
+                                MethodMatcher().apply {
+                                    name = "isPrivacyAgreed"
+                                    returnType("boolean")
+                                    paramCount(0)
+                                }
+                            )
                         }
                     }.singleOrNull()?.descriptor
                 }
@@ -764,6 +929,17 @@ object BaiduHookPack : ImeHookPack {
                                 Boolean::class.javaPrimitiveType!!
                             )
                         }
+                },
+                dexKitFinder = { bridge ->
+                    bridge.findMethod {
+                        searchPackages("com.baidu.input.clipboard.datamanager.clipboard")
+                        matcher {
+                            declaredClass {
+                                usingStrings("ClipboardDataManagerImpl", "safeDelete exception")
+                            }
+                            paramTypes("java.lang.String", "boolean")
+                        }
+                    }.singleOrNull()?.descriptor
                 }
             ),
             shouldBlock = ::isBlockedPrivacyClipboard,
@@ -881,7 +1057,24 @@ object BaiduHookPack : ImeHookPack {
             registry = registry,
             ruleId = ruleId,
             hookId = "baidu.contacts_sms.contacts_map",
-            resolveResult = resolveMethodOnClass(resolver, "baidu:t40_b_a", contactsUploaderClass, "a"),
+            resolveResult = resolveMethodOnClass(
+                resolver = resolver,
+                cacheKey = "baidu:t40_b_a",
+                clazz = contactsUploaderClass,
+                methodName = "a",
+                dexKitFinder = { bridge ->
+                    bridge.findMethod {
+                        matcher {
+                            declaredClass {
+                                usingStrings("ContactCustomManager", "https://upl.baidu.com/words/add")
+                            }
+                            usingStrings("ContactCustomManager", "display_name")
+                            returnType("java.util.HashMap")
+                            paramCount(0)
+                        }
+                    }.singleOrNull()?.descriptor
+                }
+            ),
             shouldBlock = enabledCheck,
             blockedResult = { HashMap<Any?, Any?>() }
         )
@@ -892,13 +1085,28 @@ object BaiduHookPack : ImeHookPack {
             hookId = "baidu.contacts_sms.contacts_upload",
             resolveResult = resolver.resolveMethod(
                 cacheKey = "baidu:t40_b_d",
-                fastPath = { _ ->
-                    contactsUploaderClass?.declaredMethods?.singleOrNull {
-                        it.name == "d" &&
-                            it.parameterCount == 2 &&
-                            it.parameterTypes[1] == Boolean::class.javaPrimitiveType &&
-                            it.returnType == Void.TYPE
+                fastPath = { cl ->
+                    val lp0cClass = SymbolResolver.loadClassOrNull("lp0.c", cl) ?: return@resolveMethod null
+                    contactsUploaderClass?.let {
+                        SymbolResolver.findDeclaredMethodOrNull(
+                            it,
+                            "d",
+                            lp0cClass,
+                            Boolean::class.javaPrimitiveType!!
+                        )
                     }
+                },
+                dexKitFinder = { bridge ->
+                    bridge.findMethod {
+                        matcher {
+                            declaredClass {
+                                usingStrings("ContactCustomManager", "https://upl.baidu.com/words/add")
+                            }
+                            usingStrings("https://upl.baidu.com/words/add", "android.permission.READ_CONTACTS")
+                            paramCount(2)
+                            returnType("void")
+                        }
+                    }.singleOrNull()?.descriptor
                 }
             ),
             shouldBlock = enabledCheck,
@@ -921,6 +1129,18 @@ object BaiduHookPack : ImeHookPack {
                                 String::class.java
                             )
                         }
+                },
+                dexKitFinder = { bridge ->
+                    bridge.findMethod {
+                        matcher {
+                            declaredClass {
+                                usingStrings("ContactsUtils.java")
+                            }
+                            usingStrings("display_name", "data1")
+                            paramTypes("int", "java.lang.String")
+                            returnType("java.util.List")
+                        }
+                    }.singleOrNull()?.descriptor
                 }
             ),
             shouldBlock = enabledCheck,
@@ -939,6 +1159,15 @@ object BaiduHookPack : ImeHookPack {
                 fastPath = { cl ->
                     SymbolResolver.loadClassOrNull("rj0.b", cl)
                         ?.let { SymbolResolver.findDeclaredMethodOrNull(it, "b") }
+                },
+                dexKitFinder = { bridge ->
+                    bridge.findMethod {
+                        matcher {
+                            usingStrings("installinfo", "isinstalled", "shortcutinfo", "guiderinfo")
+                            returnType("void")
+                            paramCount(0)
+                        }
+                    }.singleOrNull()?.descriptor
                 }
             ),
             fieldCacheKey = "baidu:rj0_b_selector",
@@ -953,37 +1182,70 @@ object BaiduHookPack : ImeHookPack {
 
         val imeEnvClass = resolver.resolveClass(
             cacheKey = "baidu:ime_env_callback",
-            fastPathCandidates = listOf("com.baidu.input.ime.newcore.ImeEnvCallback")
-        ).value
-        if (imeEnvClass != null) {
-            registry.hookAllMethods(
-                ruleId = ruleId,
-                hookIdPrefix = "baidu.contacts_sms.find_app",
-                clazz = imeEnvClass,
-                methodName = "findApp"
-            ) { chain ->
-                if (enabledCheck()) {
-                    registry.incrementBlocked(ruleId)
-                    -1
-                } else {
-                    chain.proceed()
-                }
+            fastPathCandidates = listOf("com.baidu.input.ime.newcore.ImeEnvCallback"),
+            dexKitFinder = { bridge ->
+                bridge.findClass {
+                    matcher {
+                        usingStrings("isAllowAiPadAutoOpen type:")
+                    }
+                }.singleOrNull()?.descriptor
             }
-            hookSimpleBlock(
-                registry = registry,
-                ruleId = ruleId,
-                hookId = "baidu.contacts_sms.has_install_app",
-                resolveResult = resolveMethodOnClass(
-                    resolver,
-                    "baidu:ime_env_has_install_app",
-                    imeEnvClass,
-                    "hasInstallApp",
-                    String::class.java
-                ),
-                shouldBlock = enabledCheck,
-                blockedResult = { false }
-            )
-        }
+        ).value
+        hookSimpleBlock(
+            registry = registry,
+            ruleId = ruleId,
+            hookId = "baidu.contacts_sms.find_app",
+            resolveResult = resolver.resolveMethod(
+                cacheKey = "baidu:ime_env_find_app",
+                fastPath = { cl ->
+                    val envCls = imeEnvClass ?: return@resolveMethod null
+                    val iptAppMsgInfoCls = SymbolResolver.loadClassOrNull("com.baidu.iptcore.info.IptAppMsgInfo", cl)
+                        ?: return@resolveMethod null
+                    val arrayClass = JvmArray.newInstance(iptAppMsgInfoCls, 0).javaClass
+                    SymbolResolver.findDeclaredMethodOrNull(envCls, "findApp", arrayClass)
+                },
+                dexKitFinder = { bridge ->
+                    bridge.findMethod {
+                        matcher {
+                            declaredClass {
+                                usingStrings("isAllowAiPadAutoOpen type:")
+                            }
+                            name = "findApp"
+                            returnType("int")
+                            paramCount(1)
+                        }
+                    }.singleOrNull()?.descriptor
+                }
+            ),
+            shouldBlock = enabledCheck,
+            blockedResult = { -1 }
+        )
+        hookSimpleBlock(
+            registry = registry,
+            ruleId = ruleId,
+            hookId = "baidu.contacts_sms.has_install_app",
+            resolveResult = resolveMethodOnClass(
+                resolver = resolver,
+                cacheKey = "baidu:ime_env_has_install_app",
+                clazz = imeEnvClass,
+                methodName = "hasInstallApp",
+                String::class.java,
+                dexKitFinder = { bridge ->
+                    bridge.findMethod {
+                        matcher {
+                            declaredClass {
+                                usingStrings("isAllowAiPadAutoOpen type:")
+                            }
+                            usingStrings("hasInstallApp packageName = ")
+                            paramTypes("java.lang.String")
+                            returnType("boolean")
+                        }
+                    }.singleOrNull()?.descriptor
+                }
+            ),
+            shouldBlock = enabledCheck,
+            blockedResult = { false }
+        )
 
         hookSimpleBlock(
             registry = registry,
@@ -992,9 +1254,21 @@ object BaiduHookPack : ImeHookPack {
             resolveResult = resolver.resolveMethod(
                 cacheKey = "baidu:l11_b_f1",
                 fastPath = { cl ->
-                    SymbolResolver.loadClassOrNull("l11.b", cl)?.declaredMethods?.singleOrNull {
-                        it.name == "f1" && it.parameterCount == 1 && it.returnType == Void.TYPE
-                    }
+                    val l11bClass = SymbolResolver.loadClassOrNull("l11.b", cl) ?: return@resolveMethod null
+                    val zg0eClass = SymbolResolver.loadClassOrNull("zg0.e", cl) ?: return@resolveMethod null
+                    SymbolResolver.findDeclaredMethodOrNull(l11bClass, "f1", zg0eClass)
+                },
+                dexKitFinder = { bridge ->
+                    bridge.findMethod {
+                        matcher {
+                            declaredClass {
+                                usingStrings("wapicon")
+                            }
+                            usingStrings("install")
+                            paramCount(1)
+                            returnType("void")
+                        }
+                    }.singleOrNull()?.descriptor
                 }
             ),
             shouldBlock = enabledCheck,
@@ -1030,11 +1304,15 @@ object BaiduHookPack : ImeHookPack {
         val collectorMethod = collectorResult.value
         val emitterField: Field? = collectorMethod?.declaringClass?.let { cls ->
             findDeclaredFieldOrNull(cls, "b")
-                ?: cls.declaredFields.firstOrNull { field ->
-                    !Modifier.isStatic(field.modifiers) &&
-                        !field.type.isPrimitive &&
-                        field.type.methods.any { m -> m.name == "onComplete" && m.parameterCount == 0 }
-                }?.apply { isAccessible = true }
+                ?: runCatching {
+                    cls.declaredFields.firstOrNull { field ->
+                        !Modifier.isStatic(field.modifiers) &&
+                            !field.type.isPrimitive &&
+                            runCatching {
+                                field.type.methods.any { m -> m.name == "onComplete" && m.parameterCount == 0 }
+                            }.getOrDefault(false)
+                    }?.apply { isAccessible = true }
+                }.getOrNull()
         }
         registry.hookExecutable(
             ruleId = ruleId,
@@ -1059,7 +1337,14 @@ object BaiduHookPack : ImeHookPack {
         // Must return Observable.empty() / pe1.x.e(false) rather than null to prevent RxJava NPE.
         val fgWClass = resolver.resolveClass(
             cacheKey = "baidu:fg_w_class",
-            fastPathCandidates = listOf("fg.w")
+            fastPathCandidates = listOf("fg.w"),
+            dexKitFinder = { bridge ->
+                bridge.findClass {
+                    matcher {
+                        usingStrings("enSysDown word info error", "ensysdown_", "cell_loc")
+                    }
+                }.singleOrNull()?.descriptor
+            }
         ).value
         hookRxSalvageVariant(
             resolver = resolver,
@@ -1067,9 +1352,22 @@ object BaiduHookPack : ImeHookPack {
             ruleId = ruleId,
             fgWClass = fgWClass,
             methodName = "b",
+            paramClassName = "x6.a",
             hookId = "baidu.salvage.fg_w_b",
             methodCacheKey = "baidu:fg_w_b",
             missingRxDetail = "fg.w#b Observable.empty() missing; keeping unhooked to prevent RxJava NPE",
+            dexKitFinder = { bridge ->
+                bridge.findMethod {
+                    matcher {
+                        declaredClass {
+                            usingStrings("enSysDown word info error", "ensysdown_")
+                        }
+                        usingStrings("wordlib_info")
+                        paramCount(1)
+                        returnType("io.reactivex.Observable")
+                    }
+                }.singleOrNull()?.descriptor
+            },
             resolveRxMethod = { retType -> BaiduJsonSanitizer.findRxEmptyObservableMethod(retType) },
             invokeRxFallback = { rxMethod -> BaiduJsonSanitizer.invokeRxEmptyObservable(rxMethod) }
         )
@@ -1079,9 +1377,21 @@ object BaiduHookPack : ImeHookPack {
             ruleId = ruleId,
             fgWClass = fgWClass,
             methodName = "c",
+            paramClassName = "kh0.j",
             hookId = "baidu.salvage.fg_w_c",
             methodCacheKey = "baidu:fg_w_c",
             missingRxDetail = "fg.w#c pe1.x.e(Object) missing; keeping unhooked to prevent RxJava NPE",
+            dexKitFinder = { bridge ->
+                bridge.findMethod {
+                    matcher {
+                        declaredClass {
+                            usingStrings("enSysDown word info error", "ensysdown_")
+                        }
+                        usingStrings("KEY_AI_CARD_TRIGGER_CONDITION", "WL_CMBC_WHITELIST")
+                        paramCount(1)
+                    }
+                }.singleOrNull()?.descriptor
+            },
             resolveRxMethod = { retType -> BaiduJsonSanitizer.findRxSingleJustMethod(retType) },
             invokeRxFallback = { rxMethod -> BaiduJsonSanitizer.invokeRxSingleBoolean(rxMethod, false) }
         )
@@ -1094,15 +1404,17 @@ object BaiduHookPack : ImeHookPack {
             resolveResult = resolver.resolveMethod(
                 cacheKey = "baidu:pl_impl_a_load",
                 fastPath = { cl ->
-                    SymbolResolver.loadClassOrNull("com.baidu.input.pl.impl.a", cl)
-                        ?.declaredMethods
-                        ?.singleOrNull { it.name == "a" && it.parameterCount == 1 && it.returnType == Void.TYPE }
+                    val plClass = SymbolResolver.loadClassOrNull("com.baidu.input.pl.impl.a", cl)
+                        ?: return@resolveMethod null
+                    val paramClass = SymbolResolver.loadClassOrNull("oi0.g", cl)
+                        ?: return@resolveMethod null
+                    SymbolResolver.findDeclaredMethodOrNull(plClass, "a", paramClass)
                 },
                 dexKitFinder = { bridge ->
                     bridge.findMethod {
                         searchPackages("com.baidu.input.pl.impl")
                         matcher {
-                            usingStrings("ime_pls_files", "PlManager")
+                            usingStrings("ime_pls_files", ".apk")
                             returnType("void")
                             paramCount(1)
                         }
@@ -1298,17 +1610,21 @@ object BaiduHookPack : ImeHookPack {
         ruleId: String,
         fgWClass: Class<*>?,
         methodName: String,
+        paramClassName: String,
         hookId: String,
         methodCacheKey: String,
         missingRxDetail: String,
+        noinline dexKitFinder: ((DexKitBridge) -> String?)? = null,
         crossinline resolveRxMethod: (Class<*>) -> Method?,
         crossinline invokeRxFallback: (Method?) -> Any?
     ) {
         val methodResult = resolver.resolveMethod(
             cacheKey = methodCacheKey,
-            fastPath = { _ ->
-                fgWClass?.declaredMethods?.singleOrNull { it.name == methodName && it.parameterCount == 1 }
-            }
+            fastPath = { cl ->
+                val paramClass = SymbolResolver.loadClassOrNull(paramClassName, cl) ?: return@resolveMethod null
+                fgWClass?.let { SymbolResolver.findDeclaredMethodOrNull(it, methodName, paramClass) }
+            },
+            dexKitFinder = dexKitFinder
         )
         val rxMethod = methodResult.value?.returnType?.let(resolveRxMethod)
         if (methodResult.value != null && rxMethod == null) {
@@ -1389,20 +1705,24 @@ object BaiduHookPack : ImeHookPack {
         cacheKey: String,
         clazz: Class<*>?,
         methodName: String,
-        vararg paramTypes: Class<*>
+        vararg paramTypes: Class<*>,
+        dexKitFinder: ((DexKitBridge) -> String?)? = null
     ): ResolveResult<Method> =
         resolver.resolveMethod(
             cacheKey = cacheKey,
             fastPath = { _ ->
                 clazz?.let { SymbolResolver.findDeclaredMethodOrNull(it, methodName, *paramTypes) }
-            }
+            },
+            dexKitFinder = dexKitFinder
         )
 
     private fun findDeclaredFieldOrNull(clazz: Class<*>, fieldName: String): Field? =
         runCatching { clazz.getDeclaredField(fieldName).apply { isAccessible = true } }.getOrNull()
 
     private fun findSingleInstanceIntField(clazz: Class<*>): Field? =
-        clazz.declaredFields
-            .singleOrNull { !Modifier.isStatic(it.modifiers) && it.type == Int::class.javaPrimitiveType }
-            ?.apply { isAccessible = true }
+        runCatching {
+            clazz.declaredFields
+                .singleOrNull { !Modifier.isStatic(it.modifiers) && it.type == Int::class.javaPrimitiveType }
+                ?.apply { isAccessible = true }
+        }.getOrNull()
 }

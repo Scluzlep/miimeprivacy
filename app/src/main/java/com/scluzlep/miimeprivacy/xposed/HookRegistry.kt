@@ -10,6 +10,7 @@ import com.scluzlep.miimeprivacy.model.ImeRuntimeDiagnostics
 import com.scluzlep.miimeprivacy.model.ImeTarget
 import io.github.libxposed.api.XposedInterface
 import java.lang.reflect.Executable
+import java.lang.reflect.Method
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
@@ -168,20 +169,15 @@ class HookRegistry(
             )
             return 0
         }
-        val targets = clazz.declaredMethods.filter { it.name == methodName }
-        if (targets.isEmpty()) {
-            recordSubHookOutcome(
-                ruleId = ruleId,
-                outcome = SubHookOutcome(
-                    hookId = hookIdPrefix,
-                    status = HookMatchStatus.FAILED,
-                    matchedMethod = "${clazz.name}#$methodName",
-                    source = ResolveSource.MISS.name,
-                    detail = "no overloads matched"
-                )
-            )
+        val lookup = collectOverloadsForHook(clazz, methodName, hookIdPrefix)
+        if (lookup.failureOutcome != null) {
+            if (lookup.error != null) {
+                logWarn("declaredMethods failed for ${clazz.name}#$methodName", lookup.error)
+            }
+            recordSubHookOutcome(ruleId = ruleId, outcome = lookup.failureOutcome)
             return 0
         }
+        val targets = lookup.targets
         var installed = 0
         targets.forEachIndexed { idx, method ->
             val subId = "$hookIdPrefix#$idx"
@@ -431,9 +427,49 @@ class HookRegistry(
         val detail: String = ""
     )
 
+    internal data class OverloadLookupResult(
+        val targets: List<Method>,
+        val failureOutcome: SubHookOutcome? = null,
+        val error: Throwable? = null
+    )
+
     companion object {
         private const val TAG = "MiImePrivacy"
         private const val DIAGNOSTICS_PUSH_INTERVAL_MS = 1500L
+
+        internal fun collectOverloadsForHook(
+            clazz: Class<*>,
+            methodName: String,
+            hookIdPrefix: String
+        ): OverloadLookupResult {
+            val declaredMethods = runCatching { clazz.declaredMethods.toList() }.getOrElse { error ->
+                return OverloadLookupResult(
+                    targets = emptyList(),
+                    failureOutcome = SubHookOutcome(
+                        hookId = hookIdPrefix,
+                        status = HookMatchStatus.FAILED,
+                        matchedMethod = "${clazz.name}#$methodName",
+                        source = ResolveSource.MISS.name,
+                        detail = "declaredMethods reflection failed: ${error.javaClass.simpleName}: ${error.message ?: "unknown"}"
+                    ),
+                    error = error
+                )
+            }
+            val targets = declaredMethods.filter { it.name == methodName }
+            if (targets.isEmpty()) {
+                return OverloadLookupResult(
+                    targets = emptyList(),
+                    failureOutcome = SubHookOutcome(
+                        hookId = hookIdPrefix,
+                        status = HookMatchStatus.FAILED,
+                        matchedMethod = "${clazz.name}#$methodName",
+                        source = ResolveSource.MISS.name,
+                        detail = "no overloads matched"
+                    )
+                )
+            }
+            return OverloadLookupResult(targets = targets)
+        }
 
         fun aggregateSubHookOutcomes(
             ruleId: String,
@@ -448,22 +484,21 @@ class HookRegistry(
                 )
             }
             val failed = outcomes.filter { it.status == HookMatchStatus.FAILED }
+            val degraded = outcomes.filter { it.status == HookMatchStatus.DEGRADED }
             val succeeded = outcomes.filter {
                 it.status == HookMatchStatus.ACTIVE ||
-                    it.status == HookMatchStatus.FALLBACK ||
-                    it.status == HookMatchStatus.DEGRADED
+                    it.status == HookMatchStatus.FALLBACK
             }
             val aggregatedStatus = when {
                 succeeded.isEmpty() && failed.isNotEmpty() -> HookMatchStatus.FAILED
-                succeeded.isNotEmpty() && failed.isNotEmpty() -> HookMatchStatus.DEGRADED
-                succeeded.isEmpty() && failed.isEmpty() -> {
+                degraded.isNotEmpty() || failed.isNotEmpty() -> HookMatchStatus.DEGRADED
+                succeeded.isEmpty() -> {
                     if (outcomes.all { it.status == HookMatchStatus.SKIPPED }) {
                         HookMatchStatus.SKIPPED
                     } else {
                         HookMatchStatus.PENDING
                     }
                 }
-                outcomes.any { it.status == HookMatchStatus.DEGRADED } -> HookMatchStatus.DEGRADED
                 outcomes.any { it.status == HookMatchStatus.FALLBACK } -> HookMatchStatus.FALLBACK
                 else -> HookMatchStatus.ACTIVE
             }
@@ -475,8 +510,9 @@ class HookRegistry(
                 else -> "${succeeded.size}/${outcomes.size} (${distinctMethods.take(3).joinToString(", ")})"
             }
             val sourceSummary = outcomes.map { it.source }.filter { it.isNotBlank() }.distinct().joinToString(",")
-            val detailSummary = if (failed.isNotEmpty()) {
-                failed.joinToString("; ") { "${it.hookId}: ${it.detail.ifBlank { "failed" }}" }
+            val issues = failed + degraded
+            val detailSummary = if (issues.isNotEmpty()) {
+                issues.joinToString("; ") { "${it.hookId}: ${it.detail.ifBlank { "未命中" }}" }
             } else {
                 outcomes.map { it.detail }.firstOrNull { it.isNotBlank() }.orEmpty()
             }
