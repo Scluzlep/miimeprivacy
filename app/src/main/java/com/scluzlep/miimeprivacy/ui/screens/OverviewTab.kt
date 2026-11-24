@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -70,7 +71,7 @@ fun OverviewTab(
     ) {
         item(key = "module_status_title") {
             SmallTitle(
-                text = "模块运行状态",
+                text = "模块状态",
                 insideMargin = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
             )
         }
@@ -85,7 +86,7 @@ fun OverviewTab(
 
         item(key = "global_cloud_title") {
             SmallTitle(
-                text = "全局云输入与会话统计",
+                text = "云输入",
                 insideMargin = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
             )
         }
@@ -100,7 +101,7 @@ fun OverviewTab(
 
         item(key = "ime_targets_title") {
             SmallTitle(
-                text = "受管输入法与独立策略",
+                text = "输入法",
                 insideMargin = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
             )
         }
@@ -131,25 +132,27 @@ private fun ModuleStatusCard(
     val statusColors = MiThemeExtras.statusColors
     val svc = state.serviceState
     val bound = svc.isServiceBound
-    val apiLabel = if (bound && svc.apiVersion > 0) "${svc.apiVersion}" else "102 (契约)"
+    val apiLabel = if (bound && svc.apiVersion > 0) "${svc.apiVersion}" else "102"
     val frameworkDesc = if (bound) {
         "${svc.frameworkName.ifBlank { "LSPosed" }} ${svc.frameworkVersion}".trim()
     } else {
-        "未连接（请在 LSPosed 管理器启用模块）"
+        "请在 LSPosed 管理器中启用模块"
     }
     val remotePrefsStatus = if (bound) {
         val stamp = state.config.updatedAtMs
         if (stamp > 0L) {
             "已同步 · ${formatTimestamp(stamp)}"
         } else {
-            "已连接 · 双向实时同步"
+            "实时同步"
         }
     } else {
-        "本地镜像降级模式（待绑定后同步）"
+        "本地模式"
     }
     val feedbackText = state.actionFeedback.ifBlank {
         svc.hotReloadStatusMessage.ifBlank { svc.scopeRequestMessage }
     }
+    val installedTargets = state.imeCards.filter { it.installedInfo.installed }
+    val needsScopeRequest = installedTargets.any { !it.isInScope }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -162,7 +165,7 @@ private fun ModuleStatusCard(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = if (bound) "XposedService 已激活" else "XposedService 未绑定",
+                    text = if (bound) "模块已激活" else "模块未激活",
                     style = MiuixTheme.textStyles.title3,
                     fontWeight = FontWeight.SemiBold,
                     color = colors.onSurfaceContainer
@@ -175,7 +178,7 @@ private fun ModuleStatusCard(
                 )
             }
             MiStatusBadge(
-                text = if (bound) "API $apiLabel" else "待激活",
+                text = if (bound) "API $apiLabel" else "未激活",
                 containerColor = if (bound) statusColors.okContainer else statusColors.warningContainer,
                 contentColor = if (bound) statusColors.onOkContainer else statusColors.onWarningContainer,
                 dotColor = if (bound) statusColors.ok else statusColors.warning
@@ -186,11 +189,11 @@ private fun ModuleStatusCard(
         HorizontalDivider(thickness = 0.5.dp, color = colors.dividerLine)
         Spacer(modifier = Modifier.height(12.dp))
 
-        KeyValueRow(label = "RemotePreferences", value = remotePrefsStatus)
+        KeyValueRow(label = "配置同步", value = remotePrefsStatus)
         Spacer(modifier = Modifier.height(6.dp))
         KeyValueRow(
-            label = "作用域覆盖",
-            value = "${state.scopeCoveredCount} / ${state.totalTargetCount} 款目标输入法"
+            label = "作用域",
+            value = "${state.scopeCoveredCount} / ${state.totalTargetCount} 款"
         )
 
         Spacer(modifier = Modifier.height(10.dp))
@@ -204,21 +207,21 @@ private fun ModuleStatusCard(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Text(
-                    text = "运行中目标进程 (${state.runningTargets.size})",
+                    text = "运行进程 · ${state.runningTargets.size}",
                     style = MiuixTheme.textStyles.footnote1,
                     fontWeight = FontWeight.SemiBold,
                     color = colors.onSurfaceContainer
                 )
                 if (state.runningTargets.isEmpty()) {
                     Text(
-                        text = "暂无运行中的已注入输入法进程（唤起键盘后会自动出现）",
+                        text = "暂无运行进程",
                         style = MiuixTheme.textStyles.body2,
                         color = colors.onSurfaceVariantSummary
                     )
                 } else {
                     state.runningTargets.forEach { proc ->
                         Text(
-                            text = "• ${proc.processName} · PID ${proc.pid} · ${proc.stateLabel} (v${proc.loadedVersionCode})",
+                            text = "${proc.processName} · PID ${proc.pid} · ${proc.stateLabel} · v${proc.loadedVersionCode}",
                             style = MiuixTheme.textStyles.footnote1,
                             fontFamily = FontFamily.Monospace,
                             color = colors.onSurfaceContainerVariant,
@@ -235,23 +238,25 @@ private fun ModuleStatusCard(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Button(
-                onClick = onRequestScope,
-                enabled = !state.isScopeRequesting,
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(
-                    color = colors.secondaryContainer,
-                    contentColor = colors.onSecondaryContainer
-                )
-            ) {
-                Text(
-                    text = if (state.isScopeRequesting) "申请中…" else "检查并申请作用域",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = colors.onSecondaryContainer,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+            if (needsScopeRequest) {
+                Button(
+                    onClick = onRequestScope,
+                    enabled = !state.isScopeRequesting,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        color = colors.secondaryContainer,
+                        contentColor = colors.onSecondaryContainer
+                    )
+                ) {
+                    Text(
+                        text = if (state.isScopeRequesting) "申请中…" else "申请作用域",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = colors.onSecondaryContainer,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
             Button(
                 onClick = onHotReload,
@@ -260,7 +265,7 @@ private fun ModuleStatusCard(
                 colors = ButtonDefaults.buttonColorsPrimary()
             ) {
                 Text(
-                    text = if (state.isHotReloading) "重载中…" else "热重载运行中模块",
+                    text = if (state.isHotReloading) "重载中…" else "热重载模块",
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
                     color = colors.onPrimary,
@@ -306,16 +311,20 @@ private fun GlobalCloudCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 12.dp)
+            ) {
                 Text(
-                    text = "允许云输入（默认字段脱敏净化）",
+                    text = "允许云输入",
                     style = MiuixTheme.textStyles.title4,
                     fontWeight = FontWeight.SemiBold,
                     color = colors.onSurfaceContainer
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "关闭即三家统一切纯本地模式，不影响字典更新",
+                    text = "关闭后三款输入法均仅用本地词库",
                     style = MiuixTheme.textStyles.body2,
                     color = colors.onSurfaceVariantSummary
                 )
@@ -340,11 +349,7 @@ private fun GlobalCloudCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = if (allowCloudInput) {
-                        "当前全局态：🟢 云输入已允许（附带载荷最小化脱敏）"
-                    } else {
-                        "当前全局态：🔒 纯本地离线（三家云联想已统一静默）"
-                    },
+                    text = if (allowCloudInput) "🟢 云输入已开启" else "🔒 纯本地模式",
                     style = MiuixTheme.textStyles.footnote1,
                     fontWeight = FontWeight.Medium,
                     color = if (allowCloudInput) statusColors.onOkContainer else statusColors.onInfoContainer,
@@ -352,7 +357,7 @@ private fun GlobalCloudCard(
                 )
                 Spacer(modifier = Modifier.padding(4.dp))
                 Text(
-                    text = "累计拦截 $totalBlockedCount 次",
+                    text = "拦截 $totalBlockedCount 次",
                     style = MiuixTheme.textStyles.footnote1,
                     fontWeight = FontWeight.Bold,
                     color = if (allowCloudInput) statusColors.onOkContainer else statusColors.onInfoContainer
@@ -413,9 +418,7 @@ private fun ImeTargetCard(
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = top.yukonga.miuix.kmp.basic.CardDefaults.CornerRadius.let {
-            androidx.compose.foundation.shape.RoundedCornerShape(it)
-        },
+        shape = RoundedCornerShape(CardDefaults.CornerRadius),
         color = colors.surfaceContainer,
         border = cardBorder
     ) {
@@ -425,7 +428,11 @@ private fun ImeTargetCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 10.dp)
+                ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -444,17 +451,17 @@ private fun ImeTargetCard(
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = buildString {
-                            append("本机：")
-                            append(model.installedInfo.formattedVersion())
-                            append(" · 审计基准 ${model.target.expectedVersionCode}")
+                        text = if (model.installedInfo.installed) {
+                            "${model.installedInfo.formattedVersion()} · 基准 ${model.target.expectedVersionCode}"
+                        } else {
+                            "未安装"
                         },
                         style = MiuixTheme.textStyles.footnote1,
                         color = colors.onSurfaceVariantSummary
                     )
                     if (summary.versionMismatch) {
                         Text(
-                            text = "版本与审计基准不一致，已启用 DexKit 自适应符号解析",
+                            text = "版本与基准不同，已启用适配解析",
                             style = MiuixTheme.textStyles.footnote2,
                             color = statusColors.warning
                         )
@@ -474,13 +481,13 @@ private fun ImeTargetCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 MiStatusBadge(
-                    text = if (model.isInScope) "作用域已启用" else "未在作用域",
+                    text = if (model.isInScope) "作用域已开" else "未在作用域",
                     containerColor = if (model.isInScope) statusColors.neutralContainer else statusColors.warningContainer,
                     contentColor = if (model.isInScope) statusColors.onNeutralContainer else statusColors.onWarningContainer
                 )
                 if (model.runningProcesses.isNotEmpty()) {
                     MiStatusBadge(
-                        text = "运行中 PID ${model.runningProcesses.first().pid}",
+                        text = "PID ${model.runningProcesses.first().pid}",
                         containerColor = statusColors.okContainer,
                         contentColor = statusColors.onOkContainer,
                         dotColor = statusColors.ok
@@ -497,12 +504,12 @@ private fun ImeTargetCard(
 
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "云输入独立策略",
+                text = "云输入策略",
                 style = MiuixTheme.textStyles.footnote1,
                 color = colors.onSurfaceVariantSummary
             )
             Spacer(modifier = Modifier.height(6.dp))
-            val policyOptions = listOf("跟随全局", "强制开启", "强制本地")
+            val policyOptions = listOf("跟随全局", "开启", "纯本地")
             val selectedPolicyIdx = when (model.cloudOverride) {
                 CloudOverride.FOLLOW_GLOBAL -> 0
                 CloudOverride.FORCE_ON -> 1
@@ -544,7 +551,7 @@ private fun ImeTargetCard(
                         modifier = Modifier.weight(1f)
                     )
                     Text(
-                        text = "诊断详情 ↗",
+                        text = "查看规则 ↗",
                         style = MiuixTheme.textStyles.footnote1,
                         fontWeight = FontWeight.SemiBold,
                         color = summaryFg

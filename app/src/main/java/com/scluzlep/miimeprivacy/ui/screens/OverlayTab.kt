@@ -24,7 +24,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -67,7 +66,6 @@ fun OverlayTab(
         draftAlpha = cfg.pillAlpha
     }
 
-    // Preview pill mode: 0 = 🟢 云输入, 1 = 🔒 纯本地, 2 = 🔴 未接管/异常
     var previewMode by remember(cfg.allowCloudInput) {
         mutableIntStateOf(if (cfg.allowCloudInput) 0 else 1)
     }
@@ -86,7 +84,7 @@ fun OverlayTab(
     ) {
         item(key = "pill_preview_title") {
             SmallTitle(
-                text = "键盘微胶囊实时预览与 Option A 交互",
+                text = "预览",
                 insideMargin = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
             )
         }
@@ -97,13 +95,12 @@ fun OverlayTab(
                 insideMargin = PaddingValues(16.dp)
             ) {
                 Text(
-                    text = "键盘顶部微胶囊示意图（点击状态标签可预览三种呈现态）",
+                    text = "点击切换胶囊状态",
                     style = MiuixTheme.textStyles.body2,
                     color = colors.onSurfaceVariantSummary
                 )
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Simulated IME keyboard top toolbar
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = MiInnerShape,
@@ -161,7 +158,7 @@ fun OverlayTab(
                                 }
                             } else {
                                 Text(
-                                    text = "微胶囊已隐藏",
+                                    text = "悬浮胶囊已隐藏",
                                     modifier = Modifier.align(Alignment.CenterStart),
                                     style = MiuixTheme.textStyles.footnote2,
                                     color = colors.onSurfaceVariantSummary
@@ -171,7 +168,7 @@ fun OverlayTab(
 
                         Spacer(modifier = Modifier.height(10.dp))
                         MiSegmentedControl(
-                            options = listOf("🟢 受管云输入", "🔒 受管纯本地", "🔴 未接管/异常"),
+                            options = listOf("🟢 云输入", "🔒 纯本地", "🔴 未接管"),
                             selectedIndex = previewMode,
                             onSelected = { previewMode = it }
                         )
@@ -182,15 +179,15 @@ fun OverlayTab(
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     InteractionGuideLine(
                         badge = "单击",
-                        desc = "在 🟢（云输入）↔ 🔒（纯本地）间秒切当前输入法模式；点击 🔴 直接弹出快捷面板防误触"
+                        desc = "切换云输入或纯本地模式，未接管时打开面板"
                     )
                     InteractionGuideLine(
                         badge = "长按",
-                        desc = "弹出浮动快捷面板，支持快捷切换全局/单输入法净化与「快捷进入模块主页 ↗」"
+                        desc = "打开快捷面板，调整开关或进入应用"
                     )
                     InteractionGuideLine(
                         badge = "拖动",
-                        desc = "按住微胶囊可自由拖拽调整位置，并按三款输入法独立记录 X/Y 偏移量"
+                        desc = "自由调整胶囊位置，各输入法独立保存"
                     )
                 }
             }
@@ -198,7 +195,7 @@ fun OverlayTab(
 
         item(key = "pill_config_title") {
             SmallTitle(
-                text = "微胶囊外观与位置调节",
+                text = "设置",
                 insideMargin = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
             )
         }
@@ -206,8 +203,8 @@ fun OverlayTab(
         item(key = "pill_config_card") {
             Card(modifier = Modifier.fillMaxWidth()) {
                 MiSwitchItem(
-                    title = "显示键盘角落微胶囊",
-                    summary = "关闭后隐藏悬浮微胶囊，不影响后台 Hook 净化与控制中心磁贴",
+                    title = "显示悬浮胶囊",
+                    summary = "隐藏后不影响拦截功能与快捷磁贴",
                     checked = cfg.showKeyboardPill,
                     onCheckedChange = controller::setShowKeyboardPill,
                     showDivider = true
@@ -225,7 +222,7 @@ fun OverlayTab(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "胶囊不透明度",
+                            text = "不透明度",
                             style = MiuixTheme.textStyles.body1,
                             fontWeight = FontWeight.Medium,
                             color = colors.onSurfaceContainer
@@ -238,7 +235,7 @@ fun OverlayTab(
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Slider(
-                        value = draftAlpha,
+                        value = draftAlpha.coerceIn(PrivacyConfig.MIN_PILL_ALPHA, PrivacyConfig.MAX_PILL_ALPHA),
                         onValueChange = { draftAlpha = it },
                         onValueChangeFinished = { controller.setPillAlpha(draftAlpha) },
                         enabled = cfg.showKeyboardPill,
@@ -249,7 +246,7 @@ fun OverlayTab(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "25%",
+                            text = "10%",
                             style = MiuixTheme.textStyles.footnote2,
                             color = colors.onSurfaceVariantSummary
                         )
@@ -279,7 +276,7 @@ fun OverlayTab(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text(
-                        text = "各输入法偏移量（默认 ${PillOffset.DEFAULT_OFFSET_X_DP}dp, ${PillOffset.DEFAULT_OFFSET_Y_DP}dp）",
+                        text = "胶囊位置",
                         style = MiuixTheme.textStyles.body1,
                         fontWeight = FontWeight.Medium,
                         color = colors.onSurfaceContainer
@@ -308,7 +305,7 @@ fun OverlayTab(
                                         color = colors.onSurfaceContainer
                                     )
                                     Text(
-                                        text = "X = ${offset.offsetXDp}dp, Y = ${offset.offsetYDp}dp",
+                                        text = "X ${offset.offsetXDp}dp · Y ${offset.offsetYDp}dp",
                                         style = MiuixTheme.textStyles.footnote1,
                                         fontFamily = FontFamily.Monospace,
                                         color = colors.onSurfaceVariantSummary
@@ -333,7 +330,7 @@ fun OverlayTab(
                         )
                     ) {
                         Text(
-                            text = "一键重置全部输入法位置 (${PillOffset.DEFAULT_OFFSET_X_DP}dp, ${PillOffset.DEFAULT_OFFSET_Y_DP}dp)",
+                            text = "全部重置",
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Medium,
                             color = colors.onSecondaryContainer
@@ -360,7 +357,7 @@ fun OverlayTab(
 
         item(key = "qs_tile_title") {
             SmallTitle(
-                text = "系统控制中心快捷磁贴",
+                text = "快捷磁贴",
                 insideMargin = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
             )
         }
@@ -371,16 +368,16 @@ fun OverlayTab(
                 insideMargin = PaddingValues(16.dp)
             ) {
                 Text(
-                    text = "添加控制中心「云输入净化」磁贴",
+                    text = "控制中心开关",
                     style = MiuixTheme.textStyles.title4,
                     fontWeight = FontWeight.SemiBold,
                     color = colors.onSurfaceContainer
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "1. 从屏幕顶部下拉打开 HyperOS 控制中心，点击右上角「编辑」按钮。\n" +
-                        "2. 在下方可选快捷开关中找到「输入法云输入」（米输净盾）并拖入常用面板。\n" +
-                        "3. 后续在任何场景下点按该磁贴，即可一键全局切换 🟢 云输入 / 🔒 纯本地离线，并自动同步至键盘微胶囊。",
+                    text = "1. 下拉打开控制中心，点击编辑按钮。\n" +
+                        "2. 将「输入法云输入」拖入快捷面板。\n" +
+                        "3. 点击即可全局切换云输入或纯本地模式。",
                     style = MiuixTheme.textStyles.body2,
                     color = colors.onSurfaceVariantSummary
                 )

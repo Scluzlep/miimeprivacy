@@ -143,7 +143,8 @@ class PrivacyUiStateTest {
         assertEquals(RuleHealthSeverity.CRITICAL_ERROR, criticalSummary.severity)
         assertEquals(1, criticalSummary.criticalFailedCount)
         assertTrue(criticalSummary.versionMismatch)
-        assertTrue(criticalSummary.headline.contains("关键 Hook 未匹配"))
+        assertTrue(criticalSummary.headline.contains("关键规则未命中"))
+        assertEquals("1 项关键规则未命中 · 5/6 正常", criticalSummary.headline)
 
         val fallbackReports = xiaoaiRules.map { spec ->
             if (spec.ruleId == HookRuleCatalog.RULE_XIAOAI_CLIPBOARD) {
@@ -166,6 +167,19 @@ class PrivacyUiStateTest {
         assertEquals(RuleHealthSeverity.FALLBACK_OK, fallbackSummary.severity)
         assertEquals(1, fallbackSummary.fallbackCount)
         assertFalse(fallbackSummary.versionMismatch)
+        assertTrue(fallbackSummary.headline.contains("兜底"))
+    }
+
+    @Test
+    fun hookRuleCatalogCopyIsConciseAndFreeOfParentheses() {
+        val rules = HookRuleCatalog.allRules()
+        assertEquals(23, rules.size)
+        for (spec in rules) {
+            assertTrue("Title too long (${spec.ruleId}): ${spec.title}", spec.title.length <= 12)
+            assertTrue("Description too long (${spec.ruleId}): ${spec.description}", spec.description.length <= 24)
+            assertFalse("Parentheses in title (${spec.ruleId})", spec.title.contains('(') || spec.title.contains('（'))
+            assertFalse("Parentheses in description (${spec.ruleId})", spec.description.contains('(') || spec.description.contains('（'))
+        }
     }
 
     @Test

@@ -4,13 +4,15 @@ on:
   push:
     branches:
       - main
+      - "feat/**"
+      - "fix/**"
     tags:
       - "v*"
   pull_request:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, e.g. v1.0 or v1.0.0"
+        description: "Release tag, e.g. v1.1 or v1.1.0"
         required: false
         default: ""
       publish_release:
@@ -29,7 +31,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -46,8 +48,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "9.7.0"
-      - name: Run unit tests and debug build
-        run: gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace --no-daemon
+      - name: Run unit tests, lint, and debug build
+        run: gradle :app:testDebugUnitTest :app:lintDebug :app:assembleDebug --stacktrace --no-daemon
       - name: Verify API 102 module metadata, DexKit packaging, and manifest in debug APK
         shell: bash
         run: |
@@ -94,7 +96,7 @@ jobs:
           PY
           BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           MANIFEST_TREE="$("$BUILD_TOOLS/aapt2" dump xmltree "$DEBUG_APK" --file AndroidManifest.xml)"
-          echo "$MANIFEST_TREE" | grep -Eq "android:extractNativeLibs.*=true"
+          echo "$MANIFEST_TREE" | grep -Eq "android:extractNativeLibs.*=(true|\(type 0x12\)0x1)"
           echo "$MANIFEST_TREE" | grep -q "android.intent.category.LAUNCHER"
           echo "$MANIFEST_TREE" | grep -q "com.scluzlep.miimeprivacy.ACTION_OPEN_SETTINGS"
           echo "$MANIFEST_TREE" | grep -q "io.github.libxposed.service.XposedProvider"
@@ -105,6 +107,66 @@ jobs:
             echo "::error::Legacy xposedminversion metadata present"
             exit 1
           fi
+      - name: Verify v1.1 integration invariants
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          python3 - "$DEBUG_APK" "$BUILD_TOOLS" <<'PY'
+          import os, pathlib, re, subprocess, sys
+
+          debug_apk, build_tools = sys.argv[1], sys.argv[2]
+          manifest_tree = subprocess.check_output(
+              [os.path.join(build_tools, "aapt2"), "dump", "xmltree", debug_apk, "--file", "AndroidManifest.xml"],
+              text=True,
+          )
+
+          xiaoai = pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/xposed/targets/XiaoAiHookPack.kt").read_text(encoding="utf-8")
+          assert "CLASS_ONETRACK_LOCAL_IMP" in xiaoai, "XiaoAiHookPack missing CLASS_ONETRACK_LOCAL_IMP"
+          assert "com.xiaomi.onetrack.api.av" in xiaoai, "XiaoAiHookPack missing com.xiaomi.onetrack.api.av"
+          assert "ONETRACK_LOCAL_IMP_STRINGS" in xiaoai, "XiaoAiHookPack missing ONETRACK_LOCAL_IMP_STRINGS"
+          assert "setDisable" in xiaoai, "XiaoAiHookPack missing OneTrack.setDisable"
+          assert "pendingInitContexts" not in xiaoai, "XiaoAiHookPack still contains pendingInitContexts"
+
+          baidu = pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/xposed/targets/BaiduHookPack.kt").read_text(encoding="utf-8")
+          assert "zg0.e" in baidu, "BaiduHookPack missing direct zg0.e lookup for l11.b#f1"
+          assert "dexKitFinder" in baidu, "BaiduHookPack missing dexKitFinder coverage"
+          assert 'SymbolResolver.loadClassOrNull("l11.b", cl)?.declaredMethods' not in baidu, "BaiduHookPack still scans l11.b.declaredMethods"
+
+          cfg = pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/config/PrivacyConfig.kt").read_text(encoding="utf-8")
+          assert re.search(r"MIN_PILL_ALPHA\s*=\s*0\.10f", cfg), "PrivacyConfig MIN_PILL_ALPHA must be 0.10f"
+          assert re.search(r"MAX_PILL_OFFSET_DP\s*=\s*2000\b", cfg), "PrivacyConfig MAX_PILL_OFFSET_DP must be 2000"
+          assert "hidePillInLandscape" in cfg, "PrivacyConfig missing hidePillInLandscape"
+
+          settings = pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/ui/screens/SettingsTab.kt").read_text(encoding="utf-8")
+          assert '"关于"' in settings, "SettingsTab missing 关于 title"
+          assert '"Scluzlep"' in settings, "SettingsTab missing Scluzlep developer credit"
+          assert "https://github.com/Scluzlep/miimeprivacy" in settings, "SettingsTab missing GitHub URL"
+          for removed in ("关于与安全边界", "Xposed 与签名校验规范", "已审计目标输入法基准版本", "透明与克制原则"):
+              assert removed not in settings, f"SettingsTab still contains removed section: {removed}"
+
+          lines = manifest_tree.splitlines()
+          fp = None
+          for idx, line in enumerate(lines):
+              if re.match(r"^\s*E:\s+provider\b", line):
+                  indent = len(line) - len(line.lstrip())
+                  block = [line]
+                  for nxt in lines[idx + 1:]:
+                      if nxt.strip() and (len(nxt) - len(nxt.lstrip())) <= indent:
+                          break
+                      block.append(nxt)
+                  block_text = "\n".join(block)
+                  if "androidx.core.content.FileProvider" in block_text:
+                      fp = block_text
+                      break
+          assert fp is not None, "FileProvider missing from AndroidManifest.xml"
+          assert ".archiveprovider" in fp, "FileProvider missing .archiveprovider authority"
+          assert re.search(r"android:exported(?:\(0x[0-9a-f]+\))?=(?:false|\(type 0x12\)0x0)\b", fp), f"FileProvider must have exported=false:\n{fp}"
+
+          print("Verified v1.1 integration invariants")
+          PY
       - name: Upload PR debug APK artifact
         if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
@@ -115,7 +177,7 @@ jobs:
 
   build-and-release:
     needs: check
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -203,8 +265,8 @@ jobs:
           test -n "$SIGNING_KEYSTORE_BASE64" || { echo "::error::Missing secret SIGNING_KEYSTORE_BASE64. Sync via SigHelper android-sig."; exit 1; }
           test -n "$SIGNING_PASSWORD" || { echo "::error::Missing secret SIGNING_PASSWORD. Sync via SigHelper android-sig."; exit 1; }
 
-      - name: Build unsigned release APK
-        run: gradle :app:assembleRelease --stacktrace --no-daemon
+      - name: Lint and build unsigned release APK
+        run: gradle :app:lintVitalRelease :app:assembleRelease --stacktrace --no-daemon
 
       - name: Zipalign, sign with SigHelper PKCS#12 secrets, and verify APK
         id: sign
@@ -263,7 +325,7 @@ jobs:
           fi
 
           MANIFEST_TREE="$("$BUILD_TOOLS/aapt2" dump xmltree "$OUT_APK" --file AndroidManifest.xml)"
-          echo "$MANIFEST_TREE" | grep -Eq "android:extractNativeLibs.*=true"
+          echo "$MANIFEST_TREE" | grep -Eq "android:extractNativeLibs.*=(true|\(type 0x12\)0x1)"
           echo "$MANIFEST_TREE" | grep -q "android.intent.category.LAUNCHER"
           echo "$MANIFEST_TREE" | grep -q "com.scluzlep.miimeprivacy.ACTION_OPEN_SETTINGS"
           echo "$MANIFEST_TREE" | grep -q "io.github.libxposed.service.XposedProvider"
@@ -274,6 +336,34 @@ jobs:
             echo "::error::Legacy xposedminversion metadata present in release APK"
             exit 1
           fi
+
+          BADGING_OUT="$("$BUILD_TOOLS/aapt2" dump badging "$OUT_APK")"
+          echo "$BADGING_OUT" | grep -q "package: name='com.scluzlep.miimeprivacy'"
+          echo "$BADGING_OUT" | grep -q "launchable-activity: name='com.scluzlep.miimeprivacy.ui.MainActivity'"
+
+          if [[ "${GITHUB_REF}" == refs/heads/main || "${GITHUB_REF}" == refs/tags/v* ]]; then
+            python3 - "$MANIFEST_TREE" <<'PY'
+          import re, sys
+          lines = sys.argv[1].splitlines()
+          fp = None
+          for idx, line in enumerate(lines):
+              if re.match(r"^\s*E:\s+provider\b", line):
+                  indent = len(line) - len(line.lstrip())
+                  block = [line]
+                  for nxt in lines[idx + 1:]:
+                      if nxt.strip() and (len(nxt) - len(nxt.lstrip())) <= indent:
+                          break
+                      block.append(nxt)
+                  block_text = "\n".join(block)
+                  if "androidx.core.content.FileProvider" in block_text:
+                      fp = block_text
+                      break
+          assert fp is not None, "FileProvider missing from release AndroidManifest.xml"
+          assert ".archiveprovider" in fp, "FileProvider missing .archiveprovider authority in release APK"
+          assert re.search(r"android:exported(?:\(0x[0-9a-f]+\))?=(?:false|\(type 0x12\)0x0)\b", fp), f"Release FileProvider must have exported=false:\n{fp}"
+          PY
+          fi
+
           python3 - "$OUT_APK" <<'PY'
           import sys, zipfile
           with zipfile.ZipFile(sys.argv[1]) as zf:
