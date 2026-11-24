@@ -73,7 +73,7 @@ object QuickPanelViewFactory {
                 } else {
                     ""
                 }
-                blockedCountView.text = "本次会话已拦截 ${diagnostics.totalBlockedCount} 次隐私行为$detailSuffix"
+                blockedCountView.text = "本次拦截 ${diagnostics.totalBlockedCount} 次$detailSuffix"
 
                 if (switchManaged.isChecked != config.isImeManaged(target)) {
                     switchManaged.isChecked = config.isImeManaged(target)
@@ -165,7 +165,7 @@ object QuickPanelViewFactory {
             ellipsize = TextUtils.TruncateAt.END
         }
         val brandView = TextView(context).apply {
-            text = "米输净盾 · 快捷隐私面板"
+            text = "米输净盾"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
             setTextColor(palette.textSecondary)
             isFocusable = false
@@ -305,7 +305,7 @@ object QuickPanelViewFactory {
 
         val switchManaged = makeSwitchRow(
             title = "接管此输入法",
-            subtitle = "关闭后保留悬浮胶囊但暂停隐私拦截"
+            subtitle = "暂停或恢复拦截"
         ) { enabled ->
             val updated = ConfigBridge.persistConfigUpdateFromIme(context) { cfg ->
                 cfg.withImeManaged(target, enabled)
@@ -314,8 +314,8 @@ object QuickPanelViewFactory {
         }
 
         val switchCloud = makeSwitchRow(
-            title = "允许云输入 (自动脱敏)",
-            subtitle = "关闭即切换纯本地词库输入"
+            title = "云输入",
+            subtitle = "关闭后仅用本地词库"
         ) { enabled ->
             val updated = ConfigBridge.persistConfigUpdateFromIme(context) { cfg ->
                 QuickPillStateMachine.setEffectiveCloudEnabledForTarget(target, cfg, enabled)
@@ -324,8 +324,8 @@ object QuickPanelViewFactory {
         }
 
         val switchContext = makeSwitchRow(
-            title = "剥离光标上下文与宿主包名",
-            subtitle = "移除前后文对话缓存并隐藏正在使用的应用"
+            title = "隐藏上下文与包名",
+            subtitle = "不上传光标前后文字与当前应用"
         ) { enabled ->
             val updated = ConfigBridge.persistConfigUpdateFromIme(context) { cfg ->
                 cfg.copy(stripCursorContext = enabled, maskHostPackage = enabled)
@@ -334,8 +334,8 @@ object QuickPanelViewFactory {
         }
 
         val switchClipboard = makeSwitchRow(
-            title = "剪贴板隐私保护",
-            subtitle = "拦截非主动粘贴的后台剪贴板读取与落盘"
+            title = "剪贴板保护",
+            subtitle = "拦截后台读取与静默记录"
         ) { enabled ->
             val updated = ConfigBridge.persistConfigUpdateFromIme(context) { cfg ->
                 cfg.copy(clipboardPrivacy = enabled)
@@ -385,7 +385,7 @@ object QuickPanelViewFactory {
         }
 
         val openMainBtn = TextView(context).apply {
-            text = "快捷进入模块主页 ↗"
+            text = "打开设置"
             gravity = Gravity.CENTER
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setTypeface(typeface, Typeface.BOLD)
