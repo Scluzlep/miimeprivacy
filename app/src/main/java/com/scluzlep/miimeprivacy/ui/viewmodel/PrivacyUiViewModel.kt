@@ -9,6 +9,7 @@ import com.scluzlep.miimeprivacy.config.CloudOverride
 import com.scluzlep.miimeprivacy.config.MonetPaletteStyle
 import com.scluzlep.miimeprivacy.config.PillOffset
 import com.scluzlep.miimeprivacy.config.PrivacyConfig
+import com.scluzlep.miimeprivacy.config.SymbolResolveMode
 import com.scluzlep.miimeprivacy.config.ThemeMode
 import com.scluzlep.miimeprivacy.model.HookMatchStatus
 import com.scluzlep.miimeprivacy.model.HookRuleCatalog
@@ -100,6 +101,42 @@ enum class PillVisualState(val emoji: String, val label: String) {
     UNMANAGED_OR_ALERT("🔴", "未接管")
 }
 
+data class SymbolResolutionSummary(
+    val cachedSymbolCount: Int = 0,
+    val activeResolveMethodText: String = "待启动",
+    val cardResolveSummaryText: String = "自动 · 待启动",
+    val canClearSymbolCache: Boolean = false
+)
+
+internal fun parseSourceTokens(rawSource: String): List<String> {
+    if (rawSource.isBlank()) return emptyList()
+    return rawSource.split(',')
+        .map { it.trim().uppercase() }
+        .filter { it.isNotBlank() }
+        .distinct()
+}
+
+internal fun formatSourceTokenLabel(token: String): String {
+    return when (token.trim().uppercase()) {
+        "DEXKIT" -> "DexKit"
+        "CACHE" -> "缓存"
+        "STRUCTURAL_FALLBACK" -> "结构兜底"
+        "FAST_PATH" -> "FastPath"
+        else -> token.trim()
+    }
+}
+
+internal fun pickPrimarySourceToken(tokens: Collection<String>): String {
+    val normalized = tokens.map { it.trim().uppercase() }.filter { it.isNotBlank() }.toSet()
+    return when {
+        "DEXKIT" in normalized -> "DEXKIT"
+        "CACHE" in normalized -> "CACHE"
+        "STRUCTURAL_FALLBACK" in normalized -> "STRUCTURAL_FALLBACK"
+        "FAST_PATH" in normalized -> "FAST_PATH"
+        else -> normalized.firstOrNull().orEmpty()
+    }
+}
+
 data class ImeCardUiModel(
     val target: ImeTarget,
     val installedInfo: InstalledImeInfo,
@@ -108,6 +145,11 @@ data class ImeCardUiModel(
     val managed: Boolean,
     val cloudOverride: CloudOverride,
     val effectiveCloudEnabled: Boolean,
+    val resolveMode: SymbolResolveMode = SymbolResolveMode.AUTO,
+    val cachedSymbolCount: Int = 0,
+    val activeResolveMethodText: String = "待启动",
+    val cardResolveSummaryText: String = "自动 · 待启动",
+    val canClearSymbolCache: Boolean = false,
     val pillOffset: PillOffset,
     val diagnostics: ImeRuntimeDiagnostics?,
     val healthSummary: ImeHealthSummary,
@@ -278,7 +320,9 @@ object PrivacyUiStateBuilder {
             }
             val managed = config.isImeManaged(target)
             val effectiveCloud = config.effectiveCloudEnabled(target)
+            val resolveMode = config.resolveModeFor(target)
             val diag = diagnosticsMap[target]
+            val resolveSummary = summarizeSymbolResolution(target, resolveMode, diag)
             val summary = summarizeImeHealth(
                 target = target,
                 managed = managed,
@@ -299,6 +343,11 @@ object PrivacyUiStateBuilder {
                 managed = managed,
                 cloudOverride = config.cloudOverrideFor(target),
                 effectiveCloudEnabled = effectiveCloud,
+                resolveMode = resolveMode,
+                cachedSymbolCount = resolveSummary.cachedSymbolCount,
+                activeResolveMethodText = resolveSummary.activeResolveMethodText,
+                cardResolveSummaryText = resolveSummary.cardResolveSummaryText,
+                canClearSymbolCache = resolveSummary.canClearSymbolCache,
                 pillOffset = config.pillOffsetFor(target),
                 diagnostics = diag,
                 healthSummary = summary,
@@ -338,6 +387,46 @@ object PrivacyUiStateBuilder {
             isScopeRequesting = isScopeRequesting,
             isHotReloading = isHotReloading,
             actionFeedback = actionFeedback
+        )
+    }
+
+    fun summarizeSymbolResolution(
+        target: ImeTarget,
+        resolveMode: SymbolResolveMode,
+        diagnostics: ImeRuntimeDiagnostics?
+    ): SymbolResolutionSummary {
+        val cachedCount = (diagnostics?.cachedSymbolCount ?: 0).coerceAtLeast(0)
+        val overlayRuleId = HookRuleCatalog.overlayRuleIdFor(target)
+        val tokens = diagnostics?.rules.orEmpty()
+            .asSequence()
+            .filter { it.ruleId != overlayRuleId }
+            .filter {
+                it.status == HookMatchStatus.ACTIVE ||
+                    it.status == HookMatchStatus.FALLBACK ||
+                    it.status == HookMatchStatus.DEGRADED
+            }
+            .flatMap { parseSourceTokens(it.source).asSequence() }
+            .toSet()
+
+        val primaryToken = pickPrimarySourceToken(tokens)
+        val (methodText, shortText) = when (primaryToken) {
+            "DEXKIT" -> "DexKit 实时搜索" to "DexKit"
+            "CACHE" -> "DexKit 符号缓存" to "缓存"
+            "STRUCTURAL_FALLBACK" -> "结构兜底" to "结构兜底"
+            "FAST_PATH" -> "FastPath 反射" to "FastPath"
+            else -> "待启动" to "待启动"
+        }
+        val modeLabel = if (resolveMode == SymbolResolveMode.DYNAMIC) "动态" else "自动"
+        val cardSummary = when {
+            shortText == "缓存" && cachedCount > 0 -> "$modeLabel · 缓存 $cachedCount 项"
+            cachedCount > 0 -> "$modeLabel · $shortText · 缓存 $cachedCount 项"
+            else -> "$modeLabel · $shortText"
+        }
+        return SymbolResolutionSummary(
+            cachedSymbolCount = cachedCount,
+            activeResolveMethodText = methodText,
+            cardResolveSummaryText = cardSummary,
+            canClearSymbolCache = resolveMode == SymbolResolveMode.DYNAMIC || cachedCount > 0
         )
     }
 }
@@ -434,6 +523,16 @@ class PrivacyUiController(context: Context) {
 
     fun setImeCloudOverride(target: ImeTarget, override: CloudOverride) {
         XposedServiceManager.updateConfig { it.withCloudOverride(target, override) }
+    }
+
+    fun setImeResolveMode(target: ImeTarget, mode: SymbolResolveMode) {
+        XposedServiceManager.updateConfig { it.withResolveMode(target, mode) }
+        val modeLabel = if (mode == SymbolResolveMode.DYNAMIC) "动态 DexKit" else "自动 FastPath"
+        _actionFeedback.value = "${target.displayName} 已切换为$modeLabel"
+    }
+
+    fun clearImeSymbolCache(target: ImeTarget) {
+        _actionFeedback.value = XposedServiceManager.clearSymbolCacheForTarget(target)
     }
 
     fun setBlockTelemetry(enabled: Boolean) {

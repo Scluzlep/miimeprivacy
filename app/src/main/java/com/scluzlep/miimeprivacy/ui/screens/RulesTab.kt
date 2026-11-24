@@ -25,6 +25,8 @@ import com.scluzlep.miimeprivacy.ui.viewmodel.PrivacyUiController
 import com.scluzlep.miimeprivacy.ui.viewmodel.PrivacyUiState
 import com.scluzlep.miimeprivacy.ui.viewmodel.RuleDisplayItem
 import com.scluzlep.miimeprivacy.ui.viewmodel.RuleTargetFilter
+import com.scluzlep.miimeprivacy.ui.viewmodel.formatSourceTokenLabel
+import com.scluzlep.miimeprivacy.ui.viewmodel.parseSourceTokens
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
@@ -221,40 +223,46 @@ private fun HookRuleDiagnosticCard(item: RuleDisplayItem) {
     val statusColors = MiThemeExtras.statusColors
     val report = item.report
     val status = item.effectiveStatus
+    val sourceTokens = parseSourceTokens(report?.source.orEmpty())
+    val badgeLabelText = formatRuleStatusBadge(
+        status = status,
+        rawSource = report?.source.orEmpty(),
+        critical = item.spec.critical
+    )
 
     val (badgeLabel, badgeBg, badgeFg, dotColor) = when (status) {
         HookMatchStatus.ACTIVE -> Quad(
-            "正常",
+            badgeLabelText,
             statusColors.okContainer,
             statusColors.onOkContainer,
             statusColors.ok
         )
         HookMatchStatus.FALLBACK -> Quad(
-            "兜底命中",
+            badgeLabelText,
             statusColors.infoContainer,
             statusColors.onInfoContainer,
             statusColors.info
         )
         HookMatchStatus.DEGRADED -> Quad(
-            "部分降级",
+            badgeLabelText,
             statusColors.warningContainer,
             statusColors.onWarningContainer,
             statusColors.warning
         )
         HookMatchStatus.FAILED -> Quad(
-            "未命中",
+            badgeLabelText,
             statusColors.errorContainer,
             statusColors.onErrorContainer,
             statusColors.error
         )
         HookMatchStatus.SKIPPED -> Quad(
-            "已跳过",
+            badgeLabelText,
             statusColors.neutralContainer,
             statusColors.onNeutralContainer,
             statusColors.neutral
         )
         HookMatchStatus.PENDING -> Quad(
-            "待激活",
+            badgeLabelText,
             statusColors.neutralContainer,
             statusColors.onNeutralContainer,
             statusColors.neutral
@@ -360,6 +368,14 @@ private fun HookRuleDiagnosticCard(item: RuleDisplayItem) {
                             color = colors.onSurfaceContainer
                         )
                     }
+                    if (sourceTokens.size > 1) {
+                        val labels = sourceTokens.map(::formatSourceTokenLabel).distinct()
+                        Text(
+                            text = "来源：${labels.joinToString(", ")}",
+                            style = MiuixTheme.textStyles.footnote2,
+                            color = colors.onSurfaceVariantSummary
+                        )
+                    }
                     if (detail != null) {
                         Text(
                             text = "详情：$detail",
@@ -384,6 +400,30 @@ private fun HookRuleDiagnosticCard(item: RuleDisplayItem) {
                 }
             }
         }
+    }
+}
+
+internal fun formatRuleStatusBadge(
+    status: HookMatchStatus,
+    rawSource: String,
+    critical: Boolean = false
+): String {
+    val tokens = parseSourceTokens(rawSource)
+    val primaryToken = when {
+        "DEXKIT" in tokens -> "DEXKIT"
+        "CACHE" in tokens -> "CACHE"
+        "STRUCTURAL_FALLBACK" in tokens -> "STRUCTURAL_FALLBACK"
+        "FAST_PATH" in tokens -> "FAST_PATH"
+        else -> tokens.firstOrNull().orEmpty()
+    }
+    val sourceLabel = if (primaryToken.isNotBlank()) formatSourceTokenLabel(primaryToken) else ""
+    return when (status) {
+        HookMatchStatus.ACTIVE -> if (sourceLabel.isNotBlank()) "正常 · $sourceLabel" else "正常"
+        HookMatchStatus.FALLBACK -> "结构兜底"
+        HookMatchStatus.DEGRADED -> if (sourceLabel.isNotBlank()) "部分降级 · $sourceLabel" else "部分降级"
+        HookMatchStatus.FAILED -> if (critical) "关键未命中" else "未命中"
+        HookMatchStatus.SKIPPED -> "已跳过"
+        HookMatchStatus.PENDING -> "待激活"
     }
 }
 

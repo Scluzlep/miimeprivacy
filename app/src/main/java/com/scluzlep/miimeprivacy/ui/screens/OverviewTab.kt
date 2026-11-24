@@ -14,6 +14,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -22,7 +26,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.scluzlep.miimeprivacy.config.CloudOverride
+import com.scluzlep.miimeprivacy.config.SymbolResolveMode
 import com.scluzlep.miimeprivacy.model.ImeTarget
 import com.scluzlep.miimeprivacy.ui.theme.MiInnerShape
 import com.scluzlep.miimeprivacy.ui.theme.MiThemeExtras
@@ -55,8 +61,12 @@ fun OverviewTab(
     onToggleAllowCloud: (Boolean) -> Unit,
     onToggleImeManaged: (ImeTarget, Boolean) -> Unit,
     onChangeImeCloudOverride: (ImeTarget, CloudOverride) -> Unit,
+    onChangeImeResolveMode: (ImeTarget, SymbolResolveMode) -> Unit,
+    onClearImeSymbolCache: (ImeTarget) -> Unit,
     onOpenImeDiagnostics: (ImeTarget) -> Unit
 ) {
+    var configuringTarget by remember { mutableStateOf<ImeTarget?>(null) }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -116,9 +126,23 @@ fun OverviewTab(
                 onSelectCloudOverride = { override ->
                     onChangeImeCloudOverride(cardModel.target, override)
                 },
+                onOpenSymbolConfig = { configuringTarget = cardModel.target },
                 onInspectDiagnostics = { onOpenImeDiagnostics(cardModel.target) }
             )
         }
+    }
+
+    val dialogModel = configuringTarget?.let { target ->
+        state.imeCards.firstOrNull { it.target == target }
+    }
+    if (dialogModel != null) {
+        ImeSymbolConfigDialog(
+            model = dialogModel,
+            feedbackText = state.actionFeedback,
+            onChangeMode = { mode -> onChangeImeResolveMode(dialogModel.target, mode) },
+            onClearCache = { onClearImeSymbolCache(dialogModel.target) },
+            onDismiss = { configuringTarget = null }
+        )
     }
 }
 
@@ -372,6 +396,7 @@ private fun ImeTargetCard(
     model: ImeCardUiModel,
     onToggleManaged: (Boolean) -> Unit,
     onSelectCloudOverride: (CloudOverride) -> Unit,
+    onOpenSymbolConfig: () -> Unit,
     onInspectDiagnostics: () -> Unit
 ) {
     val colors = MiuixTheme.colorScheme
@@ -531,6 +556,36 @@ private fun ImeTargetCard(
 
             Spacer(modifier = Modifier.height(10.dp))
             Surface(
+                onClick = onOpenSymbolConfig,
+                modifier = Modifier.fillMaxWidth(),
+                shape = MiInnerShape,
+                color = colors.surfaceVariant
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 9.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "符号解析",
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = colors.onSurfaceVariantSummary
+                    )
+                    Text(
+                        text = "${model.cardResolveSummaryText}  设置 ›",
+                        style = MiuixTheme.textStyles.footnote1,
+                        fontWeight = FontWeight.Medium,
+                        color = colors.onSurfaceContainer,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Surface(
                 onClick = onInspectDiagnostics,
                 modifier = Modifier.fillMaxWidth(),
                 shape = MiInnerShape,
@@ -555,6 +610,130 @@ private fun ImeTargetCard(
                         style = MiuixTheme.textStyles.footnote1,
                         fontWeight = FontWeight.SemiBold,
                         color = summaryFg
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImeSymbolConfigDialog(
+    model: ImeCardUiModel,
+    feedbackText: String,
+    onChangeMode: (SymbolResolveMode) -> Unit,
+    onClearCache: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val colors = MiuixTheme.colorScheme
+    val statusColors = MiThemeExtras.statusColors
+    val modeOptions = listOf("自动 FastPath", "动态 DexKit")
+    val selectedModeIdx = if (model.resolveMode == SymbolResolveMode.DYNAMIC) 1 else 0
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(CardDefaults.CornerRadius),
+            color = colors.surfaceContainer,
+            border = BorderStroke(0.5.dp, colors.dividerLine)
+        ) {
+            Column(
+                modifier = Modifier.padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "${model.target.displayName} · 符号解析",
+                    style = MiuixTheme.textStyles.title4,
+                    fontWeight = FontWeight.SemiBold,
+                    color = colors.onSurfaceContainer
+                )
+
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MiInnerShape,
+                    color = colors.surfaceVariant
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        KeyValueRow(
+                            label = "当前解析方式",
+                            value = model.activeResolveMethodText
+                        )
+                        KeyValueRow(
+                            label = "符号缓存",
+                            value = if (model.cachedSymbolCount > 0) {
+                                "${model.cachedSymbolCount} 项"
+                            } else {
+                                "无缓存"
+                            }
+                        )
+                    }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "解析模式",
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = colors.onSurfaceVariantSummary
+                    )
+                    MiSegmentedControl(
+                        options = modeOptions,
+                        selectedIndex = selectedModeIdx,
+                        onSelected = { idx ->
+                            val next = if (idx == 1) SymbolResolveMode.DYNAMIC else SymbolResolveMode.AUTO
+                            onChangeMode(next)
+                        }
+                    )
+                }
+
+                if (feedbackText.isNotBlank()) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MiInnerShape,
+                        color = statusColors.infoContainer
+                    ) {
+                        Text(
+                            text = feedbackText,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            style = MiuixTheme.textStyles.footnote1,
+                            color = statusColors.onInfoContainer
+                        )
+                    }
+                }
+
+                if (model.canClearSymbolCache) {
+                    Button(
+                        onClick = onClearCache,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            color = statusColors.warningContainer,
+                            contentColor = statusColors.onWarningContainer
+                        )
+                    ) {
+                        Text(
+                            text = "清除 DexKit 符号缓存",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = statusColors.onWarningContainer
+                        )
+                    }
+                }
+
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        color = colors.secondaryContainer,
+                        contentColor = colors.onSecondaryContainer
+                    )
+                ) {
+                    Text(
+                        text = "关闭",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = colors.onSecondaryContainer
                     )
                 }
             }

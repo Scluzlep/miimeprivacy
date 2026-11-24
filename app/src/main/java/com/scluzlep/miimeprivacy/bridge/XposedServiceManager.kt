@@ -216,6 +216,32 @@ object XposedServiceManager {
         refreshServiceState(service)
     }
 
+    fun clearSymbolCacheForTarget(target: ImeTarget): String {
+        updateConfig { current ->
+            val stamp = PrivacyConfig.nextTimestamp(current.updatedAtMs)
+            current.withCacheResetAtMs(target, stamp).copy(updatedAtMs = stamp)
+        }
+        val running = _serviceState.value.runningTargets.any { proc ->
+            val name = runCatching { proc.processName }.getOrDefault("")
+            name == target.packageName || name.startsWith("${target.packageName}:")
+        }
+        if (!running) {
+            synchronized(diagLock) {
+                val currentMap = _diagnostics.value
+                val existing = currentMap[target]
+                if (existing != null) {
+                    val cleared = existing.copy(cachedSymbolCount = 0)
+                    _diagnostics.value = currentMap.toMutableMap().apply { put(target, cleared) }
+                    diagnosticsPrefs?.edit()
+                        ?.putString(ConfigContract.KEY_DIAGNOSTICS_PREFIX + target.name, cleared.toJson())
+                        ?.apply()
+                }
+            }
+            return "已清除 ${target.displayName} 符号缓存，下次启动时重新分析"
+        }
+        return "已清除 ${target.displayName} 符号缓存，正在重新分析…"
+    }
+
     fun requestScopeForAll(onResult: ((approved: Boolean, message: String) -> Unit)? = null) {
         val service = xposedService
         if (service == null) {

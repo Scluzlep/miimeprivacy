@@ -28,6 +28,11 @@ enum class MonetPaletteStyle {
     Content
 }
 
+enum class SymbolResolveMode {
+    AUTO,
+    DYNAMIC
+}
+
 data class PillOffset(
     val offsetXDp: Int = DEFAULT_OFFSET_X_DP,
     val offsetYDp: Int = DEFAULT_OFFSET_Y_DP
@@ -75,8 +80,40 @@ data class PrivacyConfig(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val monetEnabled: Boolean = true,
     val paletteStyle: MonetPaletteStyle = MonetPaletteStyle.TonalSpot,
+    val sogouResolveMode: SymbolResolveMode = SymbolResolveMode.AUTO,
+    val baiduResolveMode: SymbolResolveMode = SymbolResolveMode.AUTO,
+    val xiaoaiResolveMode: SymbolResolveMode = SymbolResolveMode.AUTO,
+    val sogouCacheResetAtMs: Long = 0L,
+    val baiduCacheResetAtMs: Long = 0L,
+    val xiaoaiCacheResetAtMs: Long = 0L,
     val updatedAtMs: Long = 0L
 ) {
+    fun resolveModeFor(target: ImeTarget): SymbolResolveMode = when (target) {
+        ImeTarget.SOGOU -> sogouResolveMode
+        ImeTarget.BAIDU -> baiduResolveMode
+        ImeTarget.XIAOAI -> xiaoaiResolveMode
+    }
+
+    fun withResolveMode(target: ImeTarget, mode: SymbolResolveMode): PrivacyConfig = when (target) {
+        ImeTarget.SOGOU -> copy(sogouResolveMode = mode)
+        ImeTarget.BAIDU -> copy(baiduResolveMode = mode)
+        ImeTarget.XIAOAI -> copy(xiaoaiResolveMode = mode)
+    }
+
+    fun cacheResetAtMsFor(target: ImeTarget): Long = when (target) {
+        ImeTarget.SOGOU -> sogouCacheResetAtMs
+        ImeTarget.BAIDU -> baiduCacheResetAtMs
+        ImeTarget.XIAOAI -> xiaoaiCacheResetAtMs
+    }
+
+    fun withCacheResetAtMs(target: ImeTarget, resetAtMs: Long): PrivacyConfig {
+        val clean = resetAtMs.coerceAtLeast(0L)
+        return when (target) {
+            ImeTarget.SOGOU -> copy(sogouCacheResetAtMs = clean)
+            ImeTarget.BAIDU -> copy(baiduCacheResetAtMs = clean)
+            ImeTarget.XIAOAI -> copy(xiaoaiCacheResetAtMs = clean)
+        }
+    }
     fun isImeManaged(target: ImeTarget): Boolean = when (target) {
         ImeTarget.SOGOU -> sogouManaged
         ImeTarget.BAIDU -> baiduManaged
@@ -143,6 +180,9 @@ data class PrivacyConfig(
             baiduPillOffsetYDp = baiduPillOffsetYDp.coerceIn(MIN_PILL_OFFSET_DP, MAX_PILL_OFFSET_DP),
             xiaoaiPillOffsetXDp = xiaoaiPillOffsetXDp.coerceIn(MIN_PILL_OFFSET_DP, MAX_PILL_OFFSET_DP),
             xiaoaiPillOffsetYDp = xiaoaiPillOffsetYDp.coerceIn(MIN_PILL_OFFSET_DP, MAX_PILL_OFFSET_DP),
+            sogouCacheResetAtMs = sogouCacheResetAtMs.coerceAtLeast(0L),
+            baiduCacheResetAtMs = baiduCacheResetAtMs.coerceAtLeast(0L),
+            xiaoaiCacheResetAtMs = xiaoaiCacheResetAtMs.coerceAtLeast(0L),
             updatedAtMs = updatedAtMs.coerceAtLeast(0L)
         )
     }
@@ -184,6 +224,12 @@ data class PrivacyConfig(
             put(KEY_THEME_MODE, clean.themeMode.name)
             put(KEY_MONET_ENABLED, clean.monetEnabled)
             put(KEY_PALETTE_STYLE, clean.paletteStyle.name)
+            put(KEY_SOGOU_RESOLVE_MODE, clean.sogouResolveMode.name)
+            put(KEY_BAIDU_RESOLVE_MODE, clean.baiduResolveMode.name)
+            put(KEY_XIAOAI_RESOLVE_MODE, clean.xiaoaiResolveMode.name)
+            put(KEY_SOGOU_CACHE_RESET_AT_MS, clean.sogouCacheResetAtMs)
+            put(KEY_BAIDU_CACHE_RESET_AT_MS, clean.baiduCacheResetAtMs)
+            put(KEY_XIAOAI_CACHE_RESET_AT_MS, clean.xiaoaiCacheResetAtMs)
             put(KEY_UPDATED_AT_MS, clean.updatedAtMs)
         }
     }
@@ -227,6 +273,12 @@ data class PrivacyConfig(
         editor.putString(KEY_THEME_MODE, clean.themeMode.name)
         editor.putBoolean(KEY_MONET_ENABLED, clean.monetEnabled)
         editor.putString(KEY_PALETTE_STYLE, clean.paletteStyle.name)
+        editor.putString(KEY_SOGOU_RESOLVE_MODE, clean.sogouResolveMode.name)
+        editor.putString(KEY_BAIDU_RESOLVE_MODE, clean.baiduResolveMode.name)
+        editor.putString(KEY_XIAOAI_RESOLVE_MODE, clean.xiaoaiResolveMode.name)
+        editor.putLong(KEY_SOGOU_CACHE_RESET_AT_MS, clean.sogouCacheResetAtMs)
+        editor.putLong(KEY_BAIDU_CACHE_RESET_AT_MS, clean.baiduCacheResetAtMs)
+        editor.putLong(KEY_XIAOAI_CACHE_RESET_AT_MS, clean.xiaoaiCacheResetAtMs)
         if (commitSync) {
             editor.commit()
         } else {
@@ -273,6 +325,12 @@ data class PrivacyConfig(
         const val KEY_THEME_MODE = "themeMode"
         const val KEY_MONET_ENABLED = "monetEnabled"
         const val KEY_PALETTE_STYLE = "paletteStyle"
+        const val KEY_SOGOU_RESOLVE_MODE = "sogouResolveMode"
+        const val KEY_BAIDU_RESOLVE_MODE = "baiduResolveMode"
+        const val KEY_XIAOAI_RESOLVE_MODE = "xiaoaiResolveMode"
+        const val KEY_SOGOU_CACHE_RESET_AT_MS = "sogouCacheResetAtMs"
+        const val KEY_BAIDU_CACHE_RESET_AT_MS = "baiduCacheResetAtMs"
+        const val KEY_XIAOAI_CACHE_RESET_AT_MS = "xiaoaiCacheResetAtMs"
         const val KEY_UPDATED_AT_MS = "updatedAtMs"
 
         fun nextTimestamp(previousMs: Long = 0L): Long {
@@ -341,6 +399,21 @@ data class PrivacyConfig(
                     obj.optString(KEY_PALETTE_STYLE, defaults.paletteStyle.name),
                     defaults.paletteStyle
                 ),
+                sogouResolveMode = enumValueOrDefault(
+                    obj.optString(KEY_SOGOU_RESOLVE_MODE, defaults.sogouResolveMode.name),
+                    defaults.sogouResolveMode
+                ),
+                baiduResolveMode = enumValueOrDefault(
+                    obj.optString(KEY_BAIDU_RESOLVE_MODE, defaults.baiduResolveMode.name),
+                    defaults.baiduResolveMode
+                ),
+                xiaoaiResolveMode = enumValueOrDefault(
+                    obj.optString(KEY_XIAOAI_RESOLVE_MODE, defaults.xiaoaiResolveMode.name),
+                    defaults.xiaoaiResolveMode
+                ),
+                sogouCacheResetAtMs = obj.optLong(KEY_SOGOU_CACHE_RESET_AT_MS, defaults.sogouCacheResetAtMs),
+                baiduCacheResetAtMs = obj.optLong(KEY_BAIDU_CACHE_RESET_AT_MS, defaults.baiduCacheResetAtMs),
+                xiaoaiCacheResetAtMs = obj.optLong(KEY_XIAOAI_CACHE_RESET_AT_MS, defaults.xiaoaiCacheResetAtMs),
                 updatedAtMs = obj.optLong(KEY_UPDATED_AT_MS, defaults.updatedAtMs)
             ).sanitized()
         }
@@ -401,6 +474,21 @@ data class PrivacyConfig(
                     prefs.getString(KEY_PALETTE_STYLE, defaults.paletteStyle.name),
                     defaults.paletteStyle
                 ),
+                sogouResolveMode = enumValueOrDefault(
+                    prefs.getString(KEY_SOGOU_RESOLVE_MODE, defaults.sogouResolveMode.name),
+                    defaults.sogouResolveMode
+                ),
+                baiduResolveMode = enumValueOrDefault(
+                    prefs.getString(KEY_BAIDU_RESOLVE_MODE, defaults.baiduResolveMode.name),
+                    defaults.baiduResolveMode
+                ),
+                xiaoaiResolveMode = enumValueOrDefault(
+                    prefs.getString(KEY_XIAOAI_RESOLVE_MODE, defaults.xiaoaiResolveMode.name),
+                    defaults.xiaoaiResolveMode
+                ),
+                sogouCacheResetAtMs = prefs.getLong(KEY_SOGOU_CACHE_RESET_AT_MS, defaults.sogouCacheResetAtMs),
+                baiduCacheResetAtMs = prefs.getLong(KEY_BAIDU_CACHE_RESET_AT_MS, defaults.baiduCacheResetAtMs),
+                xiaoaiCacheResetAtMs = prefs.getLong(KEY_XIAOAI_CACHE_RESET_AT_MS, defaults.xiaoaiCacheResetAtMs),
                 updatedAtMs = prefs.getLong(ConfigContract.KEY_UPDATED_AT_MS, defaults.updatedAtMs)
             ).sanitized()
         }

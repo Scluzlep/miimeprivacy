@@ -1,11 +1,13 @@
 package com.scluzlep.miimeprivacy
 
 import android.content.SharedPreferences
+import android.content.pm.ApplicationInfo
 import com.scluzlep.miimeprivacy.config.CloudOverride
 import com.scluzlep.miimeprivacy.config.ConfigContract
 import com.scluzlep.miimeprivacy.config.MonetPaletteStyle
 import com.scluzlep.miimeprivacy.config.PillOffset
 import com.scluzlep.miimeprivacy.config.PrivacyConfig
+import com.scluzlep.miimeprivacy.config.SymbolResolveMode
 import com.scluzlep.miimeprivacy.config.ThemeMode
 import com.scluzlep.miimeprivacy.model.HookMatchStatus
 import com.scluzlep.miimeprivacy.model.HookRuleCatalog
@@ -13,6 +15,7 @@ import com.scluzlep.miimeprivacy.model.HookRuleReport
 import com.scluzlep.miimeprivacy.model.ImeRuntimeDiagnostics
 import com.scluzlep.miimeprivacy.model.ImeTarget
 import com.scluzlep.miimeprivacy.xposed.HookRegistry
+import com.scluzlep.miimeprivacy.xposed.ResolveSource
 import com.scluzlep.miimeprivacy.xposed.SymbolResolver
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -288,6 +291,134 @@ class ConfigAndSymbolTest {
         )
         assertEquals(HookMatchStatus.ACTIVE, activeAgg.status)
         assertEquals("FAST_PATH,DEXKIT", activeAgg.source)
+    }
+
+    @Test
+    fun resolveModeAndCacheResetRoundTripInConfigAndDiagnostics() {
+        val defaults = PrivacyConfig()
+        for (target in ImeTarget.entries) {
+            assertEquals(SymbolResolveMode.AUTO, defaults.resolveModeFor(target))
+            assertEquals(0L, defaults.cacheResetAtMsFor(target))
+        }
+
+        val configured = defaults
+            .withResolveMode(ImeTarget.SOGOU, SymbolResolveMode.DYNAMIC)
+            .withResolveMode(ImeTarget.BAIDU, SymbolResolveMode.DYNAMIC)
+            .withCacheResetAtMs(ImeTarget.SOGOU, -99L)
+            .withCacheResetAtMs(ImeTarget.BAIDU, 1732500000123L)
+            .withCacheResetAtMs(ImeTarget.XIAOAI, 1732500000999L)
+            .sanitized()
+        assertEquals(0L, configured.sogouCacheResetAtMs)
+        assertEquals(1732500000123L, configured.baiduCacheResetAtMs)
+        assertEquals(1732500000999L, configured.xiaoaiCacheResetAtMs)
+
+        val jsonDecoded = PrivacyConfig.fromJson(configured.toJson())
+        assertEquals(configured, jsonDecoded)
+
+        val prefs = InMemorySharedPreferences()
+        configured.toSharedPreferences(prefs, commitSync = true)
+        assertEquals(configured, PrivacyConfig.fromSharedPreferences(prefs))
+
+        // Verify legacy typed-key fallback preserves resolveMode and cacheResetAtMs
+        prefs.edit().remove(ConfigContract.KEY_CONFIG_JSON).commit()
+        assertEquals(configured, PrivacyConfig.fromSharedPreferences(prefs))
+
+        val diag = ImeRuntimeDiagnostics(
+            target = ImeTarget.BAIDU,
+            resolveMode = "DYNAMIC",
+            cachedSymbolCount = 24
+        )
+        val diagDecoded = ImeRuntimeDiagnostics.fromJson(diag.toJson())
+        assertNotNull(diagDecoded)
+        assertEquals("DYNAMIC", diagDecoded!!.resolveMode)
+        assertEquals(24, diagDecoded.cachedSymbolCount)
+        assertEquals(0, diag.copy(cachedSymbolCount = -5).let { ImeRuntimeDiagnostics.fromJson(it.toJson()) }!!.cachedSymbolCount)
+    }
+
+    @Test
+    fun symbolResolverDynamicModePendingResetAndClearCacheWork() {
+        val prefs = InMemorySharedPreferences()
+        val loader = checkNotNull(SampleTarget::class.java.classLoader)
+        val appInfo = ApplicationInfo().apply { sourceDir = "" }
+        val staleKey = SymbolResolver.buildCacheKey(20160L, "sogou.stale")
+        prefs.edit().putString(staleKey, "Lcom/example/Missing;").commit()
+        assertEquals(1, SymbolResolver.countCachedSymbols(prefs))
+
+        // Pending reset timestamp clears stale cache entries on SymbolResolver construction
+        val autoResolver = SymbolResolver(
+            context = null,
+            classLoader = loader,
+            appInfo = appInfo,
+            versionCode = 20160L,
+            moduleNativeLibDir = null,
+            resolveMode = SymbolResolveMode.AUTO,
+            requiredCacheResetAtMs = 5000L,
+            prefsOverride = prefs
+        )
+        autoResolver.use {
+            assertEquals(0, SymbolResolver.countCachedSymbols(prefs))
+            assertEquals(5000L, prefs.getLong(SymbolResolver.KEY_APPLIED_RESET_AT_MS, 0L))
+
+            val fastMethod = it.resolveMethod(
+                cacheKey = "sample.hello",
+                fastPath = { cl -> cl.loadClass(SampleTarget::class.java.name).getDeclaredMethod("hello", String::class.java, Int::class.javaPrimitiveType) },
+                structuralFallback = { cl -> cl.loadClass(SampleTarget::class.java.name).getDeclaredMethod("hello", String::class.java, Int::class.javaPrimitiveType) }
+            )
+            assertEquals(ResolveSource.FAST_PATH, fastMethod.source)
+        }
+
+        // Dynamic mode uses Cache -> (DexKit) -> StructuralFallback -> FastPath, populates cache on fallback
+        val dynamicResolver = SymbolResolver(
+            context = null,
+            classLoader = loader,
+            appInfo = appInfo,
+            versionCode = 20160L,
+            moduleNativeLibDir = null,
+            resolveMode = SymbolResolveMode.DYNAMIC,
+            requiredCacheResetAtMs = 5000L,
+            prefsOverride = prefs
+        )
+        dynamicResolver.use { resolver ->
+            val clsRes1 = resolver.resolveClass(
+                cacheKey = "sample.cls",
+                fastPathCandidates = listOf(SampleTarget::class.java.name),
+                structuralFallback = { SampleTarget::class.java }
+            )
+            assertEquals(ResolveSource.STRUCTURAL_FALLBACK, clsRes1.source)
+            assertEquals(1, SymbolResolver.countCachedSymbols(prefs))
+
+            val methodRes1 = resolver.resolveMethod(
+                cacheKey = "sample.hello",
+                fastPath = { SampleTarget::class.java.getDeclaredMethod("hello", String::class.java, Int::class.javaPrimitiveType) },
+                structuralFallback = { SampleTarget::class.java.getDeclaredMethod("hello", String::class.java, Int::class.javaPrimitiveType) }
+            )
+            assertEquals(ResolveSource.STRUCTURAL_FALLBACK, methodRes1.source)
+            assertEquals(2, SymbolResolver.countCachedSymbols(prefs))
+
+            // Second lookup hits CACHE ahead of FastPath/Fallback
+            val clsRes2 = resolver.resolveClass(
+                cacheKey = "sample.cls",
+                fastPathCandidates = listOf(SampleTarget::class.java.name),
+                structuralFallback = { SampleTarget::class.java }
+            )
+            val methodRes2 = resolver.resolveMethod(
+                cacheKey = "sample.hello",
+                fastPath = { SampleTarget::class.java.getDeclaredMethod("hello", String::class.java, Int::class.javaPrimitiveType) },
+                structuralFallback = { SampleTarget::class.java.getDeclaredMethod("hello", String::class.java, Int::class.javaPrimitiveType) }
+            )
+            assertEquals(ResolveSource.CACHE, clsRes2.source)
+            assertEquals(ResolveSource.CACHE, methodRes2.source)
+
+            // No-op when same resetAtMs already applied
+            assertFalse(SymbolResolver.applyPendingResetIfNeeded(prefs, 5000L))
+            assertEquals(2, SymbolResolver.countCachedSymbols(prefs))
+
+            // Clear cache removes v* entries and advances applied reset timestamp
+            val removed = SymbolResolver.clearCacheNow(prefs, 9000L)
+            assertEquals(2, removed)
+            assertEquals(0, SymbolResolver.countCachedSymbols(prefs))
+            assertEquals(9000L, prefs.getLong(SymbolResolver.KEY_APPLIED_RESET_AT_MS, 0L))
+        }
     }
 
     private class SampleTarget(val label: String) {
