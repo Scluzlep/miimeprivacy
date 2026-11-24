@@ -85,7 +85,7 @@ class BaiduEmojiInstaller(
                 current = 0,
                 total = catalog.imageCount,
                 message = "系统支持 ${catalog.supportedSequenceCount} 项，" +
-                    "生成 ${entries.size} 个百度条目（兼容肤色 ${generated.skinEnabledCount} 组）…",
+                    "生成 ${entries.size} 个百度条目，兼容肤色 ${generated.skinEnabledCount} 组…",
             ),
         )
 
@@ -165,7 +165,7 @@ class BaiduEmojiInstaller(
                 phase = PatchPhase.COMPLETE,
                 current = catalog.imageCount,
                 total = catalog.imageCount,
-                message = "百度已安装 Emoji ${configuration.emojiVersion}（${entries.size} 项），即将重载",
+                message = "百度已安装 Emoji ${configuration.emojiVersion}，共 ${entries.size} 项，即将重载",
                 installedVersion = configuration.emojiVersion,
                 installedCount = entries.size,
                 hasBackup = true,

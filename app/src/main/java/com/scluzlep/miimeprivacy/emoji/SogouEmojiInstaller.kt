@@ -72,9 +72,8 @@ class SogouEmojiInstaller(
                 phase = PatchPhase.PREPARING,
                 current = 0,
                 total = catalog.imageCount,
-                message = "系统支持 ${catalog.supportedSequenceCount} / " +
-                    "${catalog.sourceSequenceCount} 个序列，" +
-                    "合并 ${catalog.mergedSkinSets} 组肤色（含 ${catalog.mergedDualSkinMatrices} 个双肤色）…",
+                message = "系统支持 ${catalog.supportedSequenceCount}/${catalog.sourceSequenceCount} 项，" +
+                    "合并 ${catalog.mergedSkinSets} 组肤色、${catalog.mergedDualSkinMatrices} 个双肤色…",
             ),
         )
 
@@ -98,7 +97,7 @@ class SogouEmojiInstaller(
                 phase = PatchPhase.COMPLETE,
                 current = catalog.imageCount,
                 total = catalog.imageCount,
-                message = "搜狗已安装 Emoji ${configuration.emojiVersion}（${entries.size} 项），即将重载",
+                message = "搜狗已安装 Emoji ${configuration.emojiVersion}，共 ${entries.size} 项，即将重载",
                 installedVersion = configuration.emojiVersion,
                 installedCount = entries.size,
                 hasBackup = layout.backupRoot.isDirectory,

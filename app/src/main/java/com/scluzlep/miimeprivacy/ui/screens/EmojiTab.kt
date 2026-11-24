@@ -202,7 +202,7 @@ fun EmojiTab(
 
                     MiSwitchItem(
                         title = "仅安装系统支持字形",
-                        summary = "跳过当前系统字体无法渲染的序列，避免面板出现豆腐块",
+                        summary = "跳过系统字体无法渲染的编码序列",
                         checked = !config.includeUnsupportedSystemEmoji,
                         onCheckedChange = controller::setOnlySupportedGlyphs,
                         showDivider = true,
@@ -220,7 +220,7 @@ fun EmojiTab(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                text = "Noto 素材包（${EmojiCatalog.NOTO_VERSION}）",
+                                text = "Noto 素材包 ${EmojiCatalog.NOTO_VERSION}",
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = colors.onSurfaceContainer,
@@ -323,7 +323,7 @@ fun EmojiTab(
                         ) {
                             val totalInstalled = activeCounts.values.filter { it > 0 }.sum()
                             Text(
-                                text = "当前分组条目（合计 $totalInstalled 项）",
+                                text = "当前分组条目 · 共 $totalInstalled 项",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = colors.onSurfaceContainer,
@@ -370,7 +370,7 @@ fun EmojiTab(
             MiSectionCard {
                 TargetHeaderSection(
                     state = baiduState,
-                    subtitleDefault = "内置仅 Emoji 5.0（1362 项），可补全为新版 Noto Emoji",
+                    subtitleDefault = "内置仅 Emoji 5.0，可补全至最新版本",
                     hasNotoArchive = hasNotoArchive,
                     onInstall = { controller.installTarget(EmojiPatchProtocol.TARGET_BAIDU) },
                     onRestore = { controller.restoreTarget(EmojiPatchProtocol.TARGET_BAIDU) },
@@ -405,7 +405,7 @@ fun EmojiTab(
                             color = colors.onSurfaceContainer,
                         )
                         Text(
-                            text = "内置 Emoji 16.0（1901 项），系统字体直出，无需补全",
+                            text = "内置 Emoji 16.0，共 1901 项，系统字体直出，无需补全",
                             fontSize = 13.sp,
                             color = colors.onSurfaceVariantSummary,
                         )
@@ -554,7 +554,7 @@ private fun SogouGroupOrderSection(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            text = "分组排序（含组合）",
+            text = "分组排序 · 含组合",
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
             color = colors.onSurfaceContainer,

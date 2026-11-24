@@ -1,11 +1,15 @@
 package com.scluzlep.miimeprivacy.emoji
 
+import android.app.BroadcastOptions
+import android.app.PendingIntent
 import android.content.BroadcastReceiver
+import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
+import android.os.Parcelable
 import android.os.Process
 import androidx.core.content.ContextCompat
 import com.scluzlep.miimeprivacy.model.ImeTarget
@@ -97,9 +101,23 @@ object ImeEmojiRuntimeBridge {
                     if (intent.action != EmojiPatchProtocol.ACTION_COMMAND) return
                     val targetPkg = intent.getStringExtra(EmojiPatchProtocol.EXTRA_TARGET_PACKAGE)
                     if (targetPkg != appContext.packageName) return
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                        val sender = sentFromPackage
-                        if (sender != null && sender != EmojiPatchProtocol.MODULE_PACKAGE) return
+                    val senderPkg = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                        sentFromPackage
+                    } else {
+                        null
+                    }
+                    val callerProof = extractParcelableExtra(
+                        intent,
+                        EmojiPatchProtocol.EXTRA_CALLER_PROOF,
+                        PendingIntent::class.java,
+                    )
+                    if (!EmojiPatchProtocol.isTrustedModuleCaller(
+                            apiLevel = Build.VERSION.SDK_INT,
+                            sentFromPackage = senderPkg,
+                            proofCreatorPackage = callerProof?.creatorPackage,
+                        )
+                    ) {
+                        return
                     }
 
                     val command = intent.getStringExtra(EmojiPatchProtocol.EXTRA_COMMAND) ?: return
@@ -180,11 +198,15 @@ object ImeEmojiRuntimeBridge {
                     return
                 }
                 val configuration = EmojiPatchConfig.fromIntent(intent)
-                val archiveUri = extractUriExtra(intent, EmojiPatchProtocol.EXTRA_ARCHIVE_URI)
-                val emojiTestUri = extractUriExtra(intent, EmojiPatchProtocol.EXTRA_EMOJI_TEST_URI)
+                val archiveUri = extractParcelableExtra(intent, EmojiPatchProtocol.EXTRA_ARCHIVE_URI, Uri::class.java)
+                val emojiTestUri = extractParcelableExtra(intent, EmojiPatchProtocol.EXTRA_EMOJI_TEST_URI, Uri::class.java)
                 val archiveFd = runCatching {
-                    requireNotNull(archiveUri) { "未提供 Noto ZIP URI" }
-                    requireNotNull(appContext.contentResolver.openFileDescriptor(archiveUri, "r")) {
+                    val uri = requireNotNull(archiveUri) { "未提供 Noto ZIP URI" }
+                    require(
+                        uri.scheme == ContentResolver.SCHEME_CONTENT &&
+                            EmojiPatchProtocol.isTrustedArchiveUri(uri.scheme, uri.authority),
+                    ) { "不受信任的 Noto ZIP URI" }
+                    requireNotNull(appContext.contentResolver.openFileDescriptor(uri, "r")) {
                         "无法打开 Noto ZIP"
                     }
                 }.getOrElse { error ->
@@ -199,8 +221,12 @@ object ImeEmojiRuntimeBridge {
                     return
                 }
                 val emojiTestFd = runCatching {
-                    requireNotNull(emojiTestUri) { "未提供 emoji-test 清单 URI" }
-                    requireNotNull(appContext.contentResolver.openFileDescriptor(emojiTestUri, "r")) {
+                    val uri = requireNotNull(emojiTestUri) { "未提供 emoji-test 清单 URI" }
+                    require(
+                        uri.scheme == ContentResolver.SCHEME_CONTENT &&
+                            EmojiPatchProtocol.isTrustedArchiveUri(uri.scheme, uri.authority),
+                    ) { "不受信任的 emoji-test 清单 URI" }
+                    requireNotNull(appContext.contentResolver.openFileDescriptor(uri, "r")) {
                         "无法打开 emoji-test 清单"
                     }
                 }.getOrElse { error ->
@@ -392,7 +418,7 @@ object ImeEmojiRuntimeBridge {
             ImeTarget.SOGOU -> {
                 val st = SogouEmojiInstaller.readInstalledStatus(context)
                 val msg = if (st.installedVersion != null) {
-                    "已连接 · 已安装 Emoji ${st.installedVersion}（${st.installedCount} 项）"
+                    "已连接 · 已安装 Emoji ${st.installedVersion}，共 ${st.installedCount} 项"
                 } else {
                     "已连接 · 当前为原版配置"
                 }
@@ -402,9 +428,9 @@ object ImeEmojiRuntimeBridge {
             ImeTarget.BAIDU -> {
                 val st = BaiduEmojiInstaller.readInstalledStatus(context)
                 val msg = if (st.installedVersion != null) {
-                    "已连接 · 已安装 Emoji ${st.installedVersion}（${st.installedCount} 项）"
+                    "已连接 · 已安装 Emoji ${st.installedVersion}，共 ${st.installedCount} 项"
                 } else {
-                    "已连接 · 当前仅内置 Emoji 5.0"
+                    "已连接 · 当前内置仅 Emoji 5.0"
                 }
                 ReadyStatusSnapshot(st.installedVersion, st.installedCount, st.hasBackup, msg)
             }
@@ -412,10 +438,14 @@ object ImeEmojiRuntimeBridge {
             ImeTarget.XIAOAI -> ReadyStatusSnapshot(null, 0, false, "无需补全")
         }
 
-    private fun extractUriExtra(intent: Intent, key: String): Uri? {
+    private fun <T : Parcelable> extractParcelableExtra(
+        intent: Intent,
+        key: String,
+        clazz: Class<T>,
+    ): T? {
         @Suppress("DEPRECATION")
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            intent.getParcelableExtra(key, Uri::class.java)
+            intent.getParcelableExtra(key, clazz)
         } else {
             intent.getParcelableExtra(key)
         }
@@ -433,9 +463,18 @@ object ImeEmojiRuntimeBridge {
         hasBackup: Boolean = false,
     ) {
         val pkgName = context.packageName
+        val proofIntent = Intent(EmojiPatchProtocol.ACTION_STATUS_PROOF_INTERNAL)
+            .setPackage(pkgName)
+        val proof = PendingIntent.getBroadcast(
+            context,
+            0,
+            proofIntent,
+            PendingIntent.FLAG_IMMUTABLE,
+        )
         val intent = Intent(EmojiPatchProtocol.ACTION_STATUS)
             .setPackage(EmojiPatchProtocol.MODULE_PACKAGE)
             .putExtra(EmojiPatchProtocol.EXTRA_TARGET_PACKAGE, pkgName)
+            .putExtra(EmojiPatchProtocol.EXTRA_CALLER_PROOF, proof)
             .putExtra(EmojiPatchProtocol.EXTRA_SESSION_ID, sessionId)
             .putExtra(EmojiPatchProtocol.EXTRA_PHASE, phase.name)
             .putExtra(EmojiPatchProtocol.EXTRA_CURRENT, current)
@@ -457,7 +496,12 @@ object ImeEmojiRuntimeBridge {
                 intent.putExtra(EmojiPatchProtocol.EXTRA_GROUP_ORDER, order)
             }
         }
-        context.sendBroadcast(intent)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val options = BroadcastOptions.makeBasic().setShareIdentityEnabled(true)
+            context.sendBroadcast(intent, null, options.toBundle())
+        } else {
+            context.sendBroadcast(intent)
+        }
     }
 
     private const val PROCESS_EXIT_DELAY_MILLIS = 750L

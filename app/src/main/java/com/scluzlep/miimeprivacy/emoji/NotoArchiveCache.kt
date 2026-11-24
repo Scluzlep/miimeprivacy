@@ -53,7 +53,7 @@ object NotoArchiveCache {
                 }
             }
             require(imageCount >= 1000) {
-                "不是完整的 Noto Emoji ZIP（仅找到 $imageCount 张 png/128 图像）"
+                "不是完整的 Noto Emoji ZIP，仅找到 $imageCount 张 png/128 图像"
             }
         }
     }
@@ -69,7 +69,7 @@ object NotoArchiveCache {
         }
         val partial = File(destination.path + ".part")
         if (partial.length() > MAX_ZIP_BYTES) partial.delete()
-        status("开始下载 Noto Emoji ${EmojiCatalog.NOTO_VERSION}（支持断点续传）…")
+        status("开始下载 Noto Emoji ${EmojiCatalog.NOTO_VERSION}…")
         var connection: HttpURLConnection? = null
         try {
             connection = (URL(downloadUrl).openConnection() as HttpURLConnection).apply {
@@ -115,7 +115,7 @@ object NotoArchiveCache {
             }
             status("正在校验 ZIP 目录…")
             validate(partial)
-            status("正在裁剪冗余源码（保留 PNG 与旗帜）…")
+            status("正在裁剪冗余源码，保留 PNG 与旗帜…")
             makeSlimArchive(partial, destination)
             partial.delete()
             status("素材包已缓存，可离线重复安装")
@@ -223,7 +223,7 @@ object NotoArchiveCache {
         val valid = runCatching { validate(file) }.isSuccess
         if (!valid) return null
         val mib = file.length() / (1024.0 * 1024.0)
-        return String.format(Locale.ROOT, "已缓存（%.1f MiB）", mib)
+        return String.format(Locale.ROOT, "已缓存 %.1f MiB", mib)
     }
 
     private fun contentUri(context: Context, file: File): Uri = FileProvider.getUriForFile(

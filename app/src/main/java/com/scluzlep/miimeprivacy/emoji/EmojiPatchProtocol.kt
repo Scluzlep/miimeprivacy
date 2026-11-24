@@ -10,8 +10,13 @@ object EmojiPatchProtocol {
 
     const val ACTION_COMMAND = "$MODULE_PACKAGE.action.EMOJI_PATCH_COMMAND"
     const val ACTION_STATUS = "$MODULE_PACKAGE.action.EMOJI_PATCH_STATUS"
+    const val ARCHIVE_PROVIDER_AUTHORITY = "$MODULE_PACKAGE.archiveprovider"
+    const val ACTION_CALLER_PROOF_INTERNAL = "$MODULE_PACKAGE.internal.CALLER_PROOF"
+    const val ACTION_STATUS_PROOF_INTERNAL = "$MODULE_PACKAGE.internal.STATUS_PROOF"
+    private const val API_UPSIDE_DOWN_CAKE = 34
 
     const val EXTRA_TARGET_PACKAGE = "target_package"
+    const val EXTRA_CALLER_PROOF = "caller_proof"
     const val EXTRA_ARCHIVE_URI = "noto_archive_uri"
     const val EXTRA_EMOJI_TEST_URI = "emoji_test_uri"
     const val EXTRA_COMMAND = "command"
@@ -35,6 +40,31 @@ object EmojiPatchProtocol {
     const val COMMAND_INSTALL = "install"
     const val COMMAND_APPLY_ORDER = "apply_order"
     const val COMMAND_RESTORE = "restore"
+
+    fun isTrustedArchiveUri(scheme: String?, authority: String?): Boolean =
+        scheme == "content" && authority == ARCHIVE_PROVIDER_AUTHORITY
+
+    fun isTrustedModuleCaller(
+        apiLevel: Int,
+        sentFromPackage: String?,
+        proofCreatorPackage: String?,
+    ): Boolean {
+        if (proofCreatorPackage != MODULE_PACKAGE) return false
+        if (apiLevel >= API_UPSIDE_DOWN_CAKE && sentFromPackage != MODULE_PACKAGE) return false
+        return true
+    }
+
+    fun isTrustedTargetSender(
+        apiLevel: Int,
+        sentFromPackage: String?,
+        declaredTargetPackage: String?,
+        proofCreatorPackage: String?,
+    ): Boolean {
+        if (declaredTargetPackage != TARGET_SOGOU && declaredTargetPackage != TARGET_BAIDU) return false
+        if (proofCreatorPackage != declaredTargetPackage) return false
+        if (apiLevel >= API_UPSIDE_DOWN_CAKE && sentFromPackage != declaredTargetPackage) return false
+        return true
+    }
 }
 
 enum class PatchPhase {

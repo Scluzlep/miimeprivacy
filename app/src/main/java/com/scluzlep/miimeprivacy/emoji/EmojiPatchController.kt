@@ -1,6 +1,7 @@
 package com.scluzlep.miimeprivacy.emoji
 
 import android.app.BroadcastOptions
+import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.Context
@@ -9,6 +10,7 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Parcelable
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -86,6 +88,25 @@ class EmojiPatchController private constructor(
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != EmojiPatchProtocol.ACTION_STATUS) return
             val targetPkg = intent.getStringExtra(EmojiPatchProtocol.EXTRA_TARGET_PACKAGE) ?: return
+            val senderPkg = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                sentFromPackage
+            } else {
+                null
+            }
+            val senderProof = extractParcelableExtra(
+                intent,
+                EmojiPatchProtocol.EXTRA_CALLER_PROOF,
+                PendingIntent::class.java,
+            )
+            if (!EmojiPatchProtocol.isTrustedTargetSender(
+                    apiLevel = Build.VERSION.SDK_INT,
+                    sentFromPackage = senderPkg,
+                    declaredTargetPackage = targetPkg,
+                    proofCreatorPackage = senderProof?.creatorPackage,
+                )
+            ) {
+                return
+            }
             val expectedSession = sessionsByTarget[targetPkg] ?: return
             if (intent.getStringExtra(EmojiPatchProtocol.EXTRA_SESSION_ID) != expectedSession) return
 
@@ -264,7 +285,7 @@ class EmojiPatchController private constructor(
                 if (fetched.isNotEmpty()) {
                     versionRepository.saveCachedVersions(appContext, fetched)
                     mutableVersions.value = fetched
-                    mutableArchiveMessage.value = "已刷新在线版本列表（${fetched.size} 个）"
+                    mutableArchiveMessage.value = "已刷新在线版本列表，共 ${fetched.size} 个"
                 }
             }.onFailure { err ->
                 mutableArchiveMessage.value = "在线版本刷新失败：${err.message ?: err.javaClass.simpleName}"
@@ -449,6 +470,19 @@ class EmojiPatchController private constructor(
         }
     }
 
+    private fun <T : Parcelable> extractParcelableExtra(
+        intent: Intent,
+        key: String,
+        clazz: Class<T>,
+    ): T? {
+        @Suppress("DEPRECATION")
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(key, clazz)
+        } else {
+            intent.getParcelableExtra(key)
+        }
+    }
+
     private fun sendCommand(
         targetPackage: String,
         sessionId: String,
@@ -457,9 +491,18 @@ class EmojiPatchController private constructor(
         archiveUri: Uri? = null,
         emojiTestUri: Uri? = null,
     ) {
+        val proofIntent = Intent(EmojiPatchProtocol.ACTION_CALLER_PROOF_INTERNAL)
+            .setPackage(EmojiPatchProtocol.MODULE_PACKAGE)
+        val proof = PendingIntent.getBroadcast(
+            appContext,
+            0,
+            proofIntent,
+            PendingIntent.FLAG_IMMUTABLE,
+        )
         val intent = Intent(EmojiPatchProtocol.ACTION_COMMAND)
             .setPackage(targetPackage)
             .putExtra(EmojiPatchProtocol.EXTRA_TARGET_PACKAGE, targetPackage)
+            .putExtra(EmojiPatchProtocol.EXTRA_CALLER_PROOF, proof)
             .putExtra(EmojiPatchProtocol.EXTRA_COMMAND, command)
             .putExtra(EmojiPatchProtocol.EXTRA_SESSION_ID, sessionId)
         configuration?.putInto(intent)
