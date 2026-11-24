@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Subtle shadow -->
+    <path
+        android:fillColor="#26000000"
+        android:pathData="M54,28L78,38V55C78,70 67.5,82.5 54,87C40.5,82.5 30,70 30,55V38L54,28Z" />
+
+    <!-- Shield outline -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,24L77,34V52C77,67 67,79.5 54,84C41,79.5 31,67 31,52V34L54,24Z" />
+
+    <!-- Inner shield cutout -->
+    <path
+        android:fillColor="#FF0D6EFD"
+        android:pathData="M54,30L71,37.4V51.8C71,63.2 63.6,73.1 54,77C44.4,73.1 37,63.2 37,51.8V37.4L54,30Z" />
+
+    <!-- Compact 3-row keyboard keycap grid inside shield -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M42,45H47V49H42ZM49,45H54V49H49ZM56,45H61V49H56ZM63,45H66V49H63ZM42,51H47V55H42ZM49,51H54V55H49ZM56,51H61V55H56ZM63,51H66V55H63ZM46,58H62V62H46Z" />
+</vector>

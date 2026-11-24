@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">米输净盾</string>
+    <string name="module_description">针对搜狗小米版、百度小米版、超级小爱输入法的本地隐私净化、输入脱敏与云输入快捷开关模块</string>
+    <string name="tile_cloud_label">输入法云输入</string>
+    <string name="tile_cloud_on">已开启云输入</string>
+    <string name="tile_cloud_off">纯本地离线</string>
+</resources>
