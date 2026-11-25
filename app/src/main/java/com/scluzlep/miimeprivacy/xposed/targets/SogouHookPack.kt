@@ -1237,7 +1237,7 @@ object SogouHookPack : ImeHookPack {
             val miAdvHelperRes = resolver.resolveClass(
                 cacheKey = "sogou.miadvertise.MiAdvertiseDataHelper",
                 fastPathCandidates = listOf("com.sogou.inputmethod.oem.xiaomi.miadvertise.MiAdvertiseDataHelper"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "sogou.action.xiaomi.advertise_update") }
+                dexKitFinder = { dk -> findClassByStrings(dk, "isAdDataValid", "cme_5", "cme_15") }
             )
             hookResolvedMethod(
                 registry, resolver, stats, ruleId,

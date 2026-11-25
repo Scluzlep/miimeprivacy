@@ -396,7 +396,7 @@ class SogouHookPackTest {
             primary = false
         )
         val existingDegraded = HookRuleReport(
-            ruleId = HookRuleCatalog.RULE_SOGOU_CLOUD_SANITIZE,
+            ruleId = HookRuleCatalog.RULE_SOGOU_CLOUD_PAYLOAD_DEVICE_DIALOGUE,
             status = HookMatchStatus.DEGRADED,
             matchedMethod = "",
             source = "",
@@ -405,7 +405,7 @@ class SogouHookPackTest {
         )
         val degradedReport = degradedStats.buildFinalReport(
             existing = existingDegraded,
-            ruleId = HookRuleCatalog.RULE_SOGOU_CLOUD_SANITIZE,
+            ruleId = HookRuleCatalog.RULE_SOGOU_CLOUD_PAYLOAD_DEVICE_DIALOGUE,
             summaryPrefix = "CloudSanitize"
         )
         assertEquals(HookMatchStatus.DEGRADED, degradedReport.status)
@@ -425,7 +425,7 @@ class SogouHookPackTest {
         )
         val dexKitReport = dexKitStats.buildFinalReport(
             existing = null,
-            ruleId = HookRuleCatalog.RULE_SOGOU_PRIVACY_GATE,
+            ruleId = HookRuleCatalog.RULE_SOGOU_GATE_ALIVE_HEARTBEAT,
             summaryPrefix = "PrivacyGate"
         )
         assertEquals(HookMatchStatus.ACTIVE, dexKitReport.status)
@@ -452,7 +452,7 @@ class SogouHookPackTest {
         )
         val fallbackReport = fallbackStats.buildFinalReport(
             existing = null,
-            ruleId = HookRuleCatalog.RULE_SOGOU_PRIVACY_GATE,
+            ruleId = HookRuleCatalog.RULE_SOGOU_GATE_ALIVE_HEARTBEAT,
             summaryPrefix = "PrivacyGate"
         )
         assertEquals(HookMatchStatus.FALLBACK, fallbackReport.status)
@@ -476,7 +476,7 @@ class SogouHookPackTest {
         )
         val failedReport = failedStats.buildFinalReport(
             existing = null,
-            ruleId = HookRuleCatalog.RULE_SOGOU_PRIVACY_GATE,
+            ruleId = HookRuleCatalog.RULE_SOGOU_GATE_ALIVE_HEARTBEAT,
             summaryPrefix = "PrivacyGate"
         )
         assertEquals(HookMatchStatus.FAILED, failedReport.status)
