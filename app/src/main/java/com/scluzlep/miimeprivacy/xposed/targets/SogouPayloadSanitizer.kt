@@ -20,13 +20,17 @@ object SogouPayloadSanitizer {
     const val REQUEST_TYPE_CLOUD_ASSOC = 3
     const val REQUEST_TYPE_NET_SWITCH = 6
     const val REQUEST_TYPE_MUTUAL_DATA = 7
+    const val REQUEST_TYPE_CLOUD_ENTERPRISE = 10
     const val REQUEST_TYPE_DICT_UPGRADE = 11
+    const val REQUEST_TYPE_LOCATION = 12
     const val REQUEST_TYPE_PERSONALIZED_DICT = 13
+    const val REQUEST_TYPE_REAL_TIME_RECOMMEND = 14
     const val REQUEST_TYPE_CLOUD_FREQUENCY = 15
 
     private val CLOUD_CANDIDATE_REQUEST_TYPES = setOf(
         REQUEST_TYPE_CLOUD_INPUT,
         REQUEST_TYPE_CLOUD_ASSOC,
+        REQUEST_TYPE_CLOUD_ENTERPRISE,
         REQUEST_TYPE_CLOUD_FREQUENCY
     )
 
@@ -39,6 +43,11 @@ object SogouPayloadSanitizer {
     data class SanitizeReport(
         val modified: Boolean,
         val strippedFields: Set<String>
+    )
+
+    data class CloudMgrStateTransition(
+        val newState: Int?,
+        val nextSavedPriorState: Int?
     )
 
     private class BodyFieldAccessor(clazz: Class<*>) {
@@ -58,11 +67,41 @@ object SogouPayloadSanitizer {
         val h: Field? = findField(clazz, "h")
     }
 
+    private class VpaBodyFieldAccessor(clazz: Class<*>) {
+        val deviceInfo: Field? = findField(clazz, "b")
+        val locationInfo: Field? = findField(clazz, "c")
+        val dialogue: Field? = findField(clazz, "z")
+    }
+
+    private class VpaDeviceFieldAccessor(clazz: Class<*>) {
+        val clientPkg: Field? = findField(clazz, "b")
+        val androidId: Field? = findField(clazz, "d")
+        val accountId: Field? = findField(clazz, "n")
+    }
+
     private val bodyAccessors = ConcurrentHashMap<Class<*>, BodyFieldAccessor>()
     private val deviceAccessors = ConcurrentHashMap<Class<*>, DeviceFieldAccessor>()
+    private val vpaBodyAccessors = ConcurrentHashMap<Class<*>, VpaBodyFieldAccessor>()
+    private val vpaDeviceAccessors = ConcurrentHashMap<Class<*>, VpaDeviceFieldAccessor>()
 
     fun sanitizeClientRequestBody(body: Any?, config: PrivacyConfig): Boolean {
         return sanitizeClientRequestBodyDetailed(body, config).modified
+    }
+
+    fun sanitizeClientRequestBody(
+        body: Any?,
+        sanitizePayloadDeviceDialogue: Boolean,
+        stripCursorContext: Boolean,
+        maskHostPackage: Boolean,
+        stripTouchPositions: Boolean
+    ): Boolean {
+        return sanitizeClientRequestBodyDetailed(
+            body = body,
+            sanitizePayloadDeviceDialogue = sanitizePayloadDeviceDialogue,
+            stripCursorContext = stripCursorContext,
+            maskHostPackage = maskHostPackage,
+            stripTouchPositions = stripTouchPositions
+        ).modified
     }
 
     /**
@@ -71,12 +110,31 @@ object SogouPayloadSanitizer {
      * completely untouched so cloud candidates and dictionary features remain functional.
      */
     fun sanitizeClientRequestBodyDetailed(body: Any?, config: PrivacyConfig): SanitizeReport {
+        return sanitizeClientRequestBodyDetailed(
+            body = body,
+            sanitizePayloadDeviceDialogue = config.sanitizeCloudPayload,
+            stripCursorContext = config.stripCursorContext,
+            maskHostPackage = config.maskHostPackage,
+            stripTouchPositions = config.stripTouchPositions
+        )
+    }
+
+    /**
+     * Granular v2.0 overload evaluating each cloud/context sanitization rule independently.
+     */
+    fun sanitizeClientRequestBodyDetailed(
+        body: Any?,
+        sanitizePayloadDeviceDialogue: Boolean,
+        stripCursorContext: Boolean,
+        maskHostPackage: Boolean,
+        stripTouchPositions: Boolean
+    ): SanitizeReport {
         if (body == null) return SanitizeReport(modified = false, strippedFields = emptySet())
 
         val accessor = bodyAccessors.computeIfAbsent(body.javaClass, ::BodyFieldAccessor)
         val stripped = linkedSetOf<String>()
 
-        if (config.sanitizeCloudPayload) {
+        if (sanitizePayloadDeviceDialogue) {
             if (clearFieldToNull(body, accessor.dialogue)) {
                 stripped.add("dialogue")
             }
@@ -98,7 +156,7 @@ object SogouPayloadSanitizer {
             }
         }
 
-        if (config.stripCursorContext) {
+        if (stripCursorContext) {
             if (clearByteArrayField(body, accessor.stdata)) {
                 stripped.add("stdata")
             }
@@ -107,13 +165,13 @@ object SogouPayloadSanitizer {
             }
         }
 
-        if (config.maskHostPackage) {
+        if (maskHostPackage) {
             if (clearStringField(body, accessor.env)) {
                 stripped.add("env")
             }
         }
 
-        if (config.stripTouchPositions) {
+        if (stripTouchPositions) {
             if (clearFieldToNull(body, accessor.keypositions)) {
                 stripped.add("keypositions")
             }
@@ -125,23 +183,92 @@ object SogouPayloadSanitizer {
         return SanitizeReport(modified = stripped.isNotEmpty(), strippedFields = stripped)
     }
 
+    /**
+     * Sanitizes Wangzai VPA (`FanlingxiParam.clientRequestBody`, protobuf `com.sohu.inputmethod.flx.nano.d`)
+     * by stripping dialogue snippets (`z`), device IDs (`b.d`/`b.n`), geo coordinates (`c`),
+     * and host package (`b.b`) according to enabled v2.0 rules.
+     */
+    fun sanitizeWangzaiVpaRequest(
+        requestBody: Any?,
+        stripDeviceDialogue: Boolean,
+        stripLocation: Boolean,
+        stripHostPackage: Boolean
+    ): SanitizeReport {
+        if (requestBody == null) return SanitizeReport(modified = false, strippedFields = emptySet())
+        val accessor = vpaBodyAccessors.computeIfAbsent(requestBody.javaClass, ::VpaBodyFieldAccessor)
+        val stripped = linkedSetOf<String>()
+
+        if (stripDeviceDialogue && clearFieldToNull(requestBody, accessor.dialogue)) {
+            stripped.add("vpa.dialogue")
+        }
+        if (stripLocation && clearFieldToNull(requestBody, accessor.locationInfo)) {
+            stripped.add("vpa.location")
+        }
+
+        val devObj = runCatching { accessor.deviceInfo?.get(requestBody) }.getOrNull()
+        if (devObj != null) {
+            val devAccessor = vpaDeviceAccessors.computeIfAbsent(devObj.javaClass, ::VpaDeviceFieldAccessor)
+            if (stripDeviceDialogue) {
+                if (clearStringField(devObj, devAccessor.androidId)) {
+                    stripped.add("vpa.androidId")
+                }
+                if (clearStringField(devObj, devAccessor.accountId)) {
+                    stripped.add("vpa.accountId")
+                }
+            }
+            if (stripHostPackage && clearStringField(devObj, devAccessor.clientPkg)) {
+                stripped.add("vpa.clientPkg")
+            }
+        }
+
+        return SanitizeReport(modified = stripped.isNotEmpty(), strippedFields = stripped)
+    }
+
     fun evaluateWebSocketRequest(requestType: Int, config: PrivacyConfig): OutboundDecision {
-        if (!config.sogouManaged) return OutboundDecision.ALLOW
-        if (requestType == REQUEST_TYPE_MUTUAL_DATA && config.blockMutualData) {
+        return evaluateWebSocketRequest(
+            requestType = requestType,
+            targetManaged = config.sogouManaged,
+            cloudEnabled = config.effectiveCloudEnabled(ImeTarget.SOGOU),
+            blockMutualData = config.blockMutualData
+        )
+    }
+
+    fun evaluateWebSocketRequest(
+        requestType: Int,
+        targetManaged: Boolean,
+        cloudEnabled: Boolean,
+        blockMutualData: Boolean
+    ): OutboundDecision {
+        if (!targetManaged) return OutboundDecision.ALLOW
+        if (requestType == REQUEST_TYPE_MUTUAL_DATA && blockMutualData) {
             return OutboundDecision.BLOCK_MUTUAL
         }
-        if (requestType in CLOUD_CANDIDATE_REQUEST_TYPES && !config.effectiveCloudEnabled(ImeTarget.SOGOU)) {
+        if (requestType in CLOUD_CANDIDATE_REQUEST_TYPES && !cloudEnabled) {
             return OutboundDecision.BLOCK_CLOUD
         }
         return OutboundDecision.ALLOW
     }
 
     fun shouldBlockClipboardBackgroundCapture(isInputViewShown: Boolean, config: PrivacyConfig): Boolean {
-        return config.sogouManaged && config.clipboardPrivacy && !isInputViewShown
+        return shouldBlockClipboardBackgroundCapture(
+            isInputViewShown = isInputViewShown,
+            ruleEnabled = config.sogouManaged && config.clipboardPrivacy
+        )
+    }
+
+    fun shouldBlockClipboardBackgroundCapture(isInputViewShown: Boolean, ruleEnabled: Boolean): Boolean {
+        return ruleEnabled && !isInputViewShown
     }
 
     fun shouldBlockAliveEnforceSendUrl(url: String?, config: PrivacyConfig): Boolean {
-        if (!config.sogouManaged || !config.blockTelemetry || url.isNullOrBlank()) return false
+        return shouldBlockAliveEnforceSendUrl(
+            url = url,
+            ruleEnabled = config.sogouManaged && config.blockTelemetry
+        )
+    }
+
+    fun shouldBlockAliveEnforceSendUrl(url: String?, ruleEnabled: Boolean): Boolean {
+        if (!ruleEnabled || url.isNullOrBlank()) return false
         val lower = url.lowercase()
         return lower.contains("/v1/alive/") ||
             lower.contains("special_alive") ||
@@ -152,6 +279,42 @@ object SogouPayloadSanitizer {
         return config.sogouManaged &&
             config.cloudOverrideFor(ImeTarget.SOGOU) == CloudOverride.FORCE_ON &&
             currentState == 0
+    }
+
+    /**
+     * Computes `CloudMgr.m` transitions for `CloudOverride.FORCE_ON` and restores the original
+     * `m` value cleanly as soon as the override leaves `FORCE_ON`.
+     */
+    fun resolveCloudMgrStateTransition(
+        currentState: Int,
+        savedPriorState: Int?,
+        forceOn: Boolean
+    ): CloudMgrStateTransition {
+        return if (forceOn) {
+            if (currentState != 3) {
+                CloudMgrStateTransition(
+                    newState = 3,
+                    nextSavedPriorState = savedPriorState ?: currentState
+                )
+            } else {
+                CloudMgrStateTransition(
+                    newState = null,
+                    nextSavedPriorState = savedPriorState
+                )
+            }
+        } else {
+            if (savedPriorState != null) {
+                CloudMgrStateTransition(
+                    newState = savedPriorState,
+                    nextSavedPriorState = null
+                )
+            } else {
+                CloudMgrStateTransition(
+                    newState = null,
+                    nextSavedPriorState = null
+                )
+            }
+        }
     }
 
     private fun clearFieldToNull(target: Any, field: Field?): Boolean {
