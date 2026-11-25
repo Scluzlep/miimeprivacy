@@ -337,22 +337,13 @@ class SogouHookPackTest {
             .map { it.ruleId }
             .toSet()
 
-        assertEquals(
-            setOf(
-                HookRuleCatalog.RULE_SOGOU_PRIVACY_GATE,
-                HookRuleCatalog.RULE_SOGOU_TELEMETRY,
-                HookRuleCatalog.RULE_SOGOU_CLOUD_SANITIZE,
-                HookRuleCatalog.RULE_SOGOU_MUTUAL_DATA,
-                HookRuleCatalog.RULE_SOGOU_CLIPBOARD,
-                HookRuleCatalog.RULE_SOGOU_CONTACTS_APP_SCAN,
-                HookRuleCatalog.RULE_SOGOU_DYNAMIC_DEX,
-                HookRuleCatalog.RULE_SOGOU_HTTPDNS
-            ),
-            nonOverlayIds
-        )
+        assertEquals(29, nonOverlayIds.size)
+        assertTrue(HookRuleCatalog.RULE_SOGOU_GATE_ALIVE_HEARTBEAT in nonOverlayIds)
+        assertTrue(HookRuleCatalog.RULE_SOGOU_NET_HTTPDNS in nonOverlayIds)
 
         // HTTP DNS stays disabled by default
         assertFalse(PrivacyConfig().blockHttpDns)
+        assertFalse(PrivacyConfig().isRuleEnabled(HookRuleCatalog.RULE_SOGOU_NET_HTTPDNS))
 
         val criticalIds = HookRuleCatalog.rulesFor(ImeTarget.SOGOU)
             .filter { it.critical }
@@ -360,8 +351,10 @@ class SogouHookPackTest {
             .toSet()
         assertEquals(
             setOf(
-                HookRuleCatalog.RULE_SOGOU_PRIVACY_GATE,
-                HookRuleCatalog.RULE_SOGOU_CLOUD_SANITIZE
+                HookRuleCatalog.RULE_SOGOU_GATE_ALIVE_HEARTBEAT,
+                HookRuleCatalog.RULE_SOGOU_GATE_PRECONSENT_GUARD,
+                HookRuleCatalog.RULE_SOGOU_CLOUD_GATEWAY_AND_PIGGYBACK,
+                HookRuleCatalog.RULE_SOGOU_CLOUD_PAYLOAD_DEVICE_DIALOGUE
             ),
             criticalIds
         )

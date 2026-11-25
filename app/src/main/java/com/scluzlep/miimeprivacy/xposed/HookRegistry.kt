@@ -236,6 +236,27 @@ class HookRegistry(
         )
     }
 
+    fun reportSkipped(ruleId: String, reason: String = "规则已关闭") {
+        reportRule(
+            ruleId = ruleId,
+            status = HookMatchStatus.SKIPPED,
+            detail = reason
+        )
+    }
+
+    inline fun installRuleIfEnabled(
+        ruleId: String,
+        disabledReason: String = "规则已关闭",
+        block: () -> Unit
+    ): Boolean {
+        if (!ConfigBridge.isPointEnabled(target.packageName, ruleId)) {
+            reportSkipped(ruleId, disabledReason)
+            return false
+        }
+        block()
+        return true
+    }
+
     fun reportAllSkipped(reason: String, excludeRuleIds: Set<String> = emptySet()) {
         for (spec in HookRuleCatalog.rulesFor(target)) {
             if (spec.ruleId in excludeRuleIds) continue
@@ -321,7 +342,11 @@ class HookRegistry(
             val count = blockCounters[spec.ruleId]?.get() ?: current?.blockedCount ?: 0L
             current?.copy(blockedCount = count) ?: HookRuleReport(
                 ruleId = spec.ruleId,
-                status = HookMatchStatus.PENDING,
+                status = if (ConfigBridge.isPointEnabled(target.packageName, spec.ruleId)) {
+                    HookMatchStatus.PENDING
+                } else {
+                    HookMatchStatus.SKIPPED
+                },
                 blockedCount = count
             )
         }

@@ -14,7 +14,7 @@ import org.junit.Test
 class XiaoAiHookPackTest {
 
     @Test
-    fun targetMatchesXiaoAiAndCoversAllFiveNonOverlayRules() {
+    fun targetMatchesXiaoAiAndCoversAllNonOverlayRules() {
         assertEquals(ImeTarget.XIAOAI, XiaoAiHookPack.target)
 
         val nonOverlayIds = HookRuleCatalog.rulesFor(ImeTarget.XIAOAI)
@@ -22,16 +22,10 @@ class XiaoAiHookPackTest {
             .map { it.ruleId }
             .toSet()
 
-        assertEquals(
-            setOf(
-                HookRuleCatalog.RULE_XIAOAI_CTA_GATE,
-                HookRuleCatalog.RULE_XIAOAI_ONETRACK,
-                HookRuleCatalog.RULE_XIAOAI_AI_CLOUD_IPC,
-                HookRuleCatalog.RULE_XIAOAI_CLIPBOARD,
-                HookRuleCatalog.RULE_XIAOAI_HOTWORD_TRACKER
-            ),
-            nonOverlayIds
-        )
+        assertEquals(19, nonOverlayIds.size)
+        assertTrue(HookRuleCatalog.RULE_XIAOAI_GATE_CTA_FAIL_OPEN in nonOverlayIds)
+        assertTrue(HookRuleCatalog.RULE_XIAOAI_TELEMETRY_ONETRACK in nonOverlayIds)
+        assertTrue(HookRuleCatalog.RULE_XIAOAI_CONTEXT_HOTWORD_AICR in nonOverlayIds)
     }
 
     @Test

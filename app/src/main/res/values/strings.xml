@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">米输净盾</string>
+    <string name="app_name">Mi IMEPlus</string>
     <string name="module_description">搜狗、百度、超级小爱输入法隐私拦截与云输入管理模块</string>
     <string name="tile_cloud_label">输入法云输入</string>
     <string name="tile_cloud_on">云输入</string>

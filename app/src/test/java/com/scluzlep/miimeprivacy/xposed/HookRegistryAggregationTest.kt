@@ -34,7 +34,7 @@ class HookRegistryAggregationTest {
         )
 
         val report = HookRegistry.aggregateSubHookOutcomes(
-            ruleId = HookRuleCatalog.RULE_BAIDU_CONTACTS_SMS_SCAN,
+            ruleId = HookRuleCatalog.RULE_BAIDU_SCAN_CONTACTS,
             outcomes = outcomes,
             blockedCount = 0L
         )

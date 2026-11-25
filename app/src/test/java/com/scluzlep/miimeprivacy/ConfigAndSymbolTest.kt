@@ -14,6 +14,8 @@ import com.scluzlep.miimeprivacy.model.HookRuleCatalog
 import com.scluzlep.miimeprivacy.model.HookRuleReport
 import com.scluzlep.miimeprivacy.model.ImeRuntimeDiagnostics
 import com.scluzlep.miimeprivacy.model.ImeTarget
+import com.scluzlep.miimeprivacy.model.RuleCategory
+import com.scluzlep.miimeprivacy.xposed.ConfigBridge
 import com.scluzlep.miimeprivacy.xposed.HookRegistry
 import com.scluzlep.miimeprivacy.xposed.ResolveSource
 import com.scluzlep.miimeprivacy.xposed.SymbolResolver
@@ -195,13 +197,13 @@ class ConfigAndSymbolTest {
             lastUpdatedAtMs = 99999L,
             rules = listOf(
                 HookRuleReport(
-                    ruleId = HookRuleCatalog.RULE_XIAOAI_ONETRACK,
+                    ruleId = HookRuleCatalog.RULE_XIAOAI_TELEMETRY_ONETRACK,
                     status = HookMatchStatus.FAILED,
                     blockedCount = 0L,
                     detail = "method missing"
                 ),
                 HookRuleReport(
-                    ruleId = HookRuleCatalog.RULE_XIAOAI_CLIPBOARD,
+                    ruleId = HookRuleCatalog.RULE_XIAOAI_CLIP_BACKGROUND_GUARD,
                     status = HookMatchStatus.ACTIVE,
                     matchedMethod = "ClipboardMonitor#onChanged",
                     source = "DEXKIT",
@@ -220,12 +222,128 @@ class ConfigAndSymbolTest {
         val nonCriticalFail = diag.copy(
             rules = listOf(
                 HookRuleReport(
-                    ruleId = HookRuleCatalog.RULE_XIAOAI_CLIPBOARD,
+                    ruleId = HookRuleCatalog.RULE_XIAOAI_CLIP_BACKGROUND_GUARD,
                     status = HookMatchStatus.FAILED
                 )
             )
         )
         assertFalse(nonCriticalFail.hasCriticalFailure)
+    }
+
+    @Test
+    fun v2CatalogCountsCategoriesAndLookupHelpersMatchSpecification() {
+        assertEquals(9, RuleCategory.entries.size)
+        assertEquals(74, HookRuleCatalog.allRules().size)
+        assertEquals(30, HookRuleCatalog.rulesFor(ImeTarget.SOGOU).size)
+        assertEquals(24, HookRuleCatalog.rulesFor(ImeTarget.BAIDU).size)
+        assertEquals(20, HookRuleCatalog.rulesFor(ImeTarget.XIAOAI).size)
+
+        assertEquals(29, HookRuleCatalog.privacyRuleIdsForPackage(ImeTarget.SOGOU.packageName).size)
+        assertEquals(23, HookRuleCatalog.privacyRuleIdsForPackage(ImeTarget.BAIDU.packageName).size)
+        assertEquals(19, HookRuleCatalog.privacyRuleIdsForPackage(ImeTarget.XIAOAI.packageName).size)
+
+        val overlayRules = HookRuleCatalog.allRules().filter { it.isOverlayPill }
+        assertEquals(
+            setOf(
+                HookRuleCatalog.RULE_SOGOU_OVERLAY_PILL,
+                HookRuleCatalog.RULE_BAIDU_OVERLAY_PILL,
+                HookRuleCatalog.RULE_XIAOAI_OVERLAY_PILL
+            ),
+            overlayRules.map { it.ruleId }.toSet()
+        )
+
+        val defaultOffRules = HookRuleCatalog.allRules()
+            .filterNot { it.defaultEnabled }
+            .map { it.ruleId }
+            .toSet()
+        assertEquals(
+            setOf(
+                HookRuleCatalog.RULE_SOGOU_CLIP_STRICT_BLOCK_LISTENER,
+                HookRuleCatalog.RULE_SOGOU_NET_HTTPDNS,
+                HookRuleCatalog.RULE_BAIDU_CLIP_STRICT_BLOCK_READERS,
+                HookRuleCatalog.RULE_BAIDU_SCAN_SMS_OTP_LOCAL,
+                HookRuleCatalog.RULE_BAIDU_NET_HTTPDNS,
+                HookRuleCatalog.RULE_XIAOAI_GATE_UNLOCK_DEGRADE_BYPASS,
+                HookRuleCatalog.RULE_XIAOAI_CLOUD_VOICEASSIST_LAUNCH,
+                HookRuleCatalog.RULE_XIAOAI_NET_SYSTEM_CLOUD_CONTROL
+            ),
+            defaultOffRules
+        )
+
+        val hotwordSpec = HookRuleCatalog.findById(HookRuleCatalog.RULE_XIAOAI_CONTEXT_HOTWORD_AICR)
+        assertNotNull(hotwordSpec)
+        assertTrue(hotwordSpec!!.defaultEnabled)
+        assertTrue(hotwordSpec.critical)
+        assertEquals(RuleCategory.CONTEXT_STRIP, hotwordSpec.category)
+    }
+
+    @Test
+    fun v2RuleOverridesSanitizationPackageHelpersAndMigrationWork() {
+        val base = PrivacyConfig()
+        assertEquals(2, base.configVersion)
+        assertTrue(base.isRuleEnabled(HookRuleCatalog.RULE_XIAOAI_CONTEXT_HOTWORD_AICR))
+        assertFalse(base.isRuleEnabled(HookRuleCatalog.RULE_SOGOU_NET_HTTPDNS))
+        assertTrue(base.areAllPackageContextRulesEnabled(ImeTarget.SOGOU.packageName))
+        assertTrue(base.arePackageClipboardGuardsEnabled(ImeTarget.SOGOU.packageName))
+        assertFalse(base.isRuleEnabled(HookRuleCatalog.RULE_SOGOU_CLIP_STRICT_BLOCK_LISTENER))
+
+        // Package-scoped quick panel context & clipboard toggles affect only target package
+        val sogouContextOff = base.withPackageContextRules(ImeTarget.SOGOU.packageName, false)
+        assertFalse(sogouContextOff.areAllPackageContextRulesEnabled(ImeTarget.SOGOU.packageName))
+        assertTrue(sogouContextOff.areAllPackageContextRulesEnabled(ImeTarget.BAIDU.packageName))
+        assertTrue(sogouContextOff.areAllPackageContextRulesEnabled(ImeTarget.XIAOAI.packageName))
+        assertFalse(sogouContextOff.isRuleEnabled(HookRuleCatalog.RULE_SOGOU_CONTEXT_CURSOR_TEXT))
+
+        val baiduClipOff = base.withPackageClipboardGuards(ImeTarget.BAIDU.packageName, false)
+        assertFalse(baiduClipOff.arePackageClipboardGuardsEnabled(ImeTarget.BAIDU.packageName))
+        assertTrue(baiduClipOff.arePackageClipboardGuardsEnabled(ImeTarget.SOGOU.packageName))
+        val baiduClipBackOn = baiduClipOff.withPackageClipboardGuards(ImeTarget.BAIDU.packageName, true)
+        assertTrue(baiduClipBackOn.arePackageClipboardGuardsEnabled(ImeTarget.BAIDU.packageName))
+        assertFalse(baiduClipBackOn.isRuleEnabled(HookRuleCatalog.RULE_BAIDU_CLIP_STRICT_BLOCK_READERS))
+
+        // Unknown rule IDs are stripped on sanitized(), JSON, and SharedPreferences round-trips
+        val dirtyOverrides = base.copy(
+            ruleOverrides = mapOf(
+                HookRuleCatalog.RULE_SOGOU_NET_HTTPDNS to true,
+                "unknown.rule.id" to false
+            ),
+            updatedAtMs = 12345L
+        ).sanitized()
+        assertEquals(mapOf(HookRuleCatalog.RULE_SOGOU_NET_HTTPDNS to true), dirtyOverrides.ruleOverrides)
+        assertEquals(dirtyOverrides, PrivacyConfig.fromJson(dirtyOverrides.toJson()))
+
+        val prefs = InMemorySharedPreferences()
+        dirtyOverrides.toSharedPreferences(prefs, commitSync = true)
+        assertEquals(dirtyOverrides, PrivacyConfig.fromSharedPreferences(prefs))
+        prefs.edit().remove(ConfigContract.KEY_CONFIG_JSON).commit()
+        assertEquals(dirtyOverrides, PrivacyConfig.fromSharedPreferences(prefs))
+
+        // v1.x JSON migration without config_version or rule_overrides
+        val legacyJson = """
+            {
+              "blockTelemetry": false,
+              "blockPasswordStats": false,
+              "blockHttpDns": true,
+              "blockXiaoAiHotwordTracker": false,
+              "showKeyboardPill": false,
+              "updatedAtMs": 9001
+            }
+        """.trimIndent()
+        val migrated = PrivacyConfig.fromJson(legacyJson)
+        assertEquals(2, migrated.configVersion)
+        assertFalse(migrated.isRuleEnabled(HookRuleCatalog.RULE_SOGOU_GATE_ALIVE_HEARTBEAT))
+        assertFalse(migrated.isRuleEnabled(HookRuleCatalog.RULE_XIAOAI_TELEMETRY_PASSWORD_AND_SESSION))
+        assertTrue(migrated.isRuleEnabled(HookRuleCatalog.RULE_SOGOU_NET_HTTPDNS))
+        assertTrue(migrated.isRuleEnabled(HookRuleCatalog.RULE_BAIDU_NET_HTTPDNS))
+        assertFalse(migrated.isRuleEnabled(HookRuleCatalog.RULE_SOGOU_OVERLAY_PILL))
+        // v2.0 default remains true even when v1.x blockXiaoAiHotwordTracker was false
+        assertTrue(migrated.isRuleEnabled(HookRuleCatalog.RULE_XIAOAI_CONTEXT_HOTWORD_AICR))
+
+        // ConfigBridge.isPointEnabled & isRuleEnabled delegate cleanly
+        ConfigBridge.detach()
+        assertTrue(ConfigBridge.isPointEnabled(ImeTarget.XIAOAI.packageName, HookRuleCatalog.RULE_XIAOAI_CONTEXT_HOTWORD_AICR))
+        assertFalse(ConfigBridge.isPointEnabled(ImeTarget.SOGOU.packageName, HookRuleCatalog.RULE_SOGOU_NET_HTTPDNS))
+        assertTrue(ConfigBridge.isRuleEnabled(HookRuleCatalog.RULE_BAIDU_GATE_CONSENT_AND_1839))
     }
 
     @Test
@@ -244,7 +362,7 @@ class ConfigAndSymbolTest {
 
     @Test
     fun subHookAggregationCoversAllFailureDegradedFallbackAndActiveStates() {
-        val ruleId = HookRuleCatalog.RULE_SOGOU_PRIVACY_GATE
+        val ruleId = HookRuleCatalog.RULE_SOGOU_GATE_ALIVE_HEARTBEAT
 
         // All failed -> FAILED
         val allFailed = HookRegistry.aggregateSubHookOutcomes(
