@@ -84,8 +84,14 @@ internal object XiaoAiPrivacyPolicy {
         return null
     }
 
+    /**
+     * Global Cloud Input (`allowCloudInput` + `xiaoaiCloudOverride`) always blocks XiaoAi cloud
+     * requests when `纯本地` is active while [PrivacyConfig.xiaoaiManaged] is true, regardless of
+     * individual `xiaoai.cloud.*` privacy rule toggles.
+     */
+    @Suppress("UNUSED_PARAMETER")
     fun shouldBlockCloudService(config: PrivacyConfig, ruleId: String): Boolean =
-        isRuleEnabled(config, ruleId) && !config.effectiveCloudEnabled(ImeTarget.XIAOAI)
+        config.xiaoaiManaged && !config.effectiveCloudEnabled(ImeTarget.XIAOAI)
 
     fun shouldSanitizeMiclawPrompt(config: PrivacyConfig): Boolean =
         isRuleEnabled(config, HookRuleCatalog.RULE_XIAOAI_CLOUD_MICLAW_LLM) ||

@@ -81,9 +81,21 @@ class PrivacyUiViewModelTest {
 
     @Test
     fun categoryLabelsAndImportJsonValidationWorkCleanly() {
+        val expectedLabels = mapOf(
+            RuleCategory.PRIVACY_GATE to "隐私门控",
+            RuleCategory.DEVICE_ID to "设备标识",
+            RuleCategory.TELEMETRY to "遥测与埋点",
+            RuleCategory.CLOUD_PRIVACY to "云端脱敏",
+            RuleCategory.CONTEXT_STRIP to "上下文剥离",
+            RuleCategory.CLIPBOARD to "剪贴板",
+            RuleCategory.SCAN_AND_LOCATION to "扫描与定位",
+            RuleCategory.DYNAMIC_AND_NET to "动态加载与网络",
+            RuleCategory.UI_ENHANCE to "界面与悬浮"
+        )
+        assertEquals(RuleCategory.entries.toSet(), expectedLabels.keys)
         for (category in RuleCategory.entries) {
             val label = ruleCategoryLabel(category)
-            assertTrue(label.isNotBlank())
+            assertEquals(expectedLabels[category], label)
             assertFalse(label.contains("\u7c73\u8f93\u51c0\u76fe"))
             assertFalse(label.contains("Mi IME" + " Plus"))
         }
@@ -103,7 +115,16 @@ class PrivacyUiViewModelTest {
     }
 
     @Test
-    fun ruleTargetFilterMapsAllThreeImesCleanly() {
+    fun ruleTargetFilterDefaultsToAllCollapsedAndMapsAllThreeImesCleanly() {
+        val vmSource = listOf(
+            java.io.File("src/main/java/com/scluzlep/miimeprivacy/ui/viewmodel/PrivacyUiViewModel.kt"),
+            java.io.File("app/src/main/java/com/scluzlep/miimeprivacy/ui/viewmodel/PrivacyUiViewModel.kt")
+        ).first { it.exists() }.readText()
+        assertTrue(
+            "Initial _selectedRuleFilter must be RuleTargetFilter.ALL",
+            vmSource.contains("MutableStateFlow(RuleTargetFilter.ALL)")
+        )
+        assertEquals(null, RuleTargetFilter.ALL.target)
         assertEquals(
             listOf(RuleTargetFilter.SOGOU, RuleTargetFilter.BAIDU, RuleTargetFilter.XIAOAI),
             RuleTargetFilter.targetTabs

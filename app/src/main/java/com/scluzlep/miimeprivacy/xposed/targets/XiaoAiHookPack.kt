@@ -1781,7 +1781,10 @@ object XiaoAiHookPack : ImeHookPack {
             }
         )
         registry.hookExecutable(ruleId, "voiceassist_assist_intent", assistLaunchMethod) { chain ->
-            if (ConfigBridge.isPointEnabled(targetPkg, HookRuleCatalog.RULE_XIAOAI_CLOUD_VOICEASSIST_LAUNCH)) {
+            val cfg = ConfigBridge.current
+            if (XiaoAiPrivacyPolicy.shouldBlockVoiceAssistLaunch(cfg) ||
+                XiaoAiPrivacyPolicy.shouldBlockCloudService(cfg, ruleId)
+            ) {
                 registry.incrementBlocked(ruleId)
                 return@hookExecutable XiaoAiOneTrackGuard.defaultReturnValue(
                     assistLaunchMethod.value?.returnType ?: Boolean::class.javaPrimitiveType!!
@@ -1819,7 +1822,10 @@ object XiaoAiHookPack : ImeHookPack {
             }
         )
         registry.hookExecutable(ruleId, "voiceassist_query_service", queryLaunchMethod) { chain ->
-            if (ConfigBridge.isPointEnabled(targetPkg, HookRuleCatalog.RULE_XIAOAI_CLOUD_VOICEASSIST_LAUNCH)) {
+            val cfg = ConfigBridge.current
+            if (XiaoAiPrivacyPolicy.shouldBlockVoiceAssistLaunch(cfg) ||
+                XiaoAiPrivacyPolicy.shouldBlockCloudService(cfg, ruleId)
+            ) {
                 registry.incrementBlocked(ruleId)
                 return@hookExecutable null
             }
@@ -1881,7 +1887,7 @@ object XiaoAiHookPack : ImeHookPack {
             val tts = chain.getArg(1) as? String
             val featureId = chain.getArg(2) as? String
 
-            if (llmEnabled && !cfg.effectiveCloudEnabled(ImeTarget.XIAOAI)) {
+            if (XiaoAiPrivacyPolicy.shouldBlockCloudService(cfg, ruleId)) {
                 val failedSession = miclawHelper.buildFailedSession(chain.thisObject, text, tts, featureId)
                 if (failedSession != null) {
                     registry.incrementBlocked(ruleId)
@@ -2032,9 +2038,7 @@ object XiaoAiHookPack : ImeHookPack {
         val translateHelper = TranslateBlockHelper(translateIdleClass, translateErrorClass)
 
         registry.hookExecutable(ruleId, "translate_engine", translateMethod) { chain ->
-            if (ConfigBridge.isPointEnabled(targetPkg, HookRuleCatalog.RULE_XIAOAI_CLOUD_TRANSLATE_AND_TAIYI) &&
-                !ConfigBridge.isCloudEnabled(ImeTarget.XIAOAI)
-            ) {
+            if (XiaoAiPrivacyPolicy.shouldBlockCloudService(ConfigBridge.current, ruleId)) {
                 val idleState = translateHelper.failAndReturnIdle(chain.getArg(0))
                 if (idleState != null) {
                     registry.incrementBlocked(ruleId)
@@ -2064,9 +2068,7 @@ object XiaoAiHookPack : ImeHookPack {
             }
         }
         registry.hookExecutable(ruleId, "taiyi_aiservice_connect", taiyiConnectMethod) { chain ->
-            if (ConfigBridge.isPointEnabled(targetPkg, HookRuleCatalog.RULE_XIAOAI_CLOUD_TRANSLATE_AND_TAIYI) &&
-                !ConfigBridge.isCloudEnabled(ImeTarget.XIAOAI)
-            ) {
+            if (XiaoAiPrivacyPolicy.shouldBlockCloudService(ConfigBridge.current, ruleId)) {
                 notifyConnectCallbackFailed(chain.getArg(1), XiaoAiAnchors.TAIYI_BLOCKED_CODE, "Cloud AI blocked")
                 registry.incrementBlocked(ruleId)
                 return@hookExecutable null
@@ -2096,15 +2098,13 @@ object XiaoAiHookPack : ImeHookPack {
         )
         val aiResponseHelper = TaiyiErrorResponseHelper(classLoader)
         registry.hookExecutable(ruleId, "taiyi_aiservice_exec", taiyiExecMethod) { chain ->
-            if (ConfigBridge.isPointEnabled(targetPkg, HookRuleCatalog.RULE_XIAOAI_CLOUD_TRANSLATE_AND_TAIYI)) {
-                val request = chain.getArg(0)
-                val localAffinity = isTaiyiLocalAffinity(request)
-                if (!localAffinity && !ConfigBridge.isCloudEnabled(ImeTarget.XIAOAI)) {
-                    val errResp = aiResponseHelper.createBlockedResponse(request, XiaoAiAnchors.TAIYI_BLOCKED_CODE)
-                    if (errResp != null) {
-                        registry.incrementBlocked(ruleId)
-                        return@hookExecutable errResp
-                    }
+            val request = chain.getArg(0)
+            val localAffinity = isTaiyiLocalAffinity(request)
+            if (!localAffinity && XiaoAiPrivacyPolicy.shouldBlockCloudService(ConfigBridge.current, ruleId)) {
+                val errResp = aiResponseHelper.createBlockedResponse(request, XiaoAiAnchors.TAIYI_BLOCKED_CODE)
+                if (errResp != null) {
+                    registry.incrementBlocked(ruleId)
+                    return@hookExecutable errResp
                 }
             }
             chain.proceed()
@@ -2142,7 +2142,7 @@ object XiaoAiHookPack : ImeHookPack {
         registry.hookExecutable(ruleId, "speech_asr_start", speechStartMethod) { chain ->
             val asrEnabled = ConfigBridge.isPointEnabled(targetPkg, HookRuleCatalog.RULE_XIAOAI_CLOUD_SPEECH_ASR)
             val pkgEnabled = ConfigBridge.isPointEnabled(targetPkg, HookRuleCatalog.RULE_XIAOAI_CONTEXT_TOP_ACTIVITY_AND_PKG)
-            if (asrEnabled && !ConfigBridge.isCloudEnabled(ImeTarget.XIAOAI)) {
+            if (XiaoAiPrivacyPolicy.shouldBlockCloudService(ConfigBridge.current, ruleId)) {
                 registry.incrementBlocked(ruleId)
                 return@hookExecutable null
             }
@@ -2178,7 +2178,7 @@ object XiaoAiHookPack : ImeHookPack {
         registry.hookExecutable(ruleId, "speech_asr_prepare", speechPrepareMethod) { chain ->
             val asrEnabled = ConfigBridge.isPointEnabled(targetPkg, HookRuleCatalog.RULE_XIAOAI_CLOUD_SPEECH_ASR)
             val pkgEnabled = ConfigBridge.isPointEnabled(targetPkg, HookRuleCatalog.RULE_XIAOAI_CONTEXT_TOP_ACTIVITY_AND_PKG)
-            if (asrEnabled && !ConfigBridge.isCloudEnabled(ImeTarget.XIAOAI)) {
+            if (XiaoAiPrivacyPolicy.shouldBlockCloudService(ConfigBridge.current, ruleId)) {
                 registry.incrementBlocked(ruleId)
                 return@hookExecutable null
             }
@@ -2218,9 +2218,7 @@ object XiaoAiHookPack : ImeHookPack {
             }
         }
         registry.hookExecutable(ruleId, "speech_manager_bind", speechBindMethod) { chain ->
-            if (ConfigBridge.isPointEnabled(targetPkg, HookRuleCatalog.RULE_XIAOAI_CLOUD_SPEECH_ASR) &&
-                !ConfigBridge.isCloudEnabled(ImeTarget.XIAOAI)
-            ) {
+            if (XiaoAiPrivacyPolicy.shouldBlockCloudService(ConfigBridge.current, ruleId)) {
                 registry.incrementBlocked(ruleId)
                 return@hookExecutable null
             }
@@ -2284,9 +2282,7 @@ object XiaoAiHookPack : ImeHookPack {
             }
         )
         registry.hookExecutable(ruleId, "dictpack_scheduler_sync", schedulerSyncMethod) { chain ->
-            if (ConfigBridge.isPointEnabled(targetPkg, HookRuleCatalog.RULE_XIAOAI_CLOUD_DICTPACK_SYNC) &&
-                !ConfigBridge.isCloudEnabled(ImeTarget.XIAOAI)
-            ) {
+            if (XiaoAiPrivacyPolicy.shouldBlockCloudService(ConfigBridge.current, ruleId)) {
                 val args = chain.args
                 if (args.size >= 3 && (args[1] == true || args[2] == true)) {
                     registry.incrementBlocked(ruleId)
@@ -2320,9 +2316,7 @@ object XiaoAiHookPack : ImeHookPack {
                 safeDeclaredMethods(cls).firstOrNull { !Modifier.isStatic(it.modifiers) && it.name == name && it.parameterCount == 1 }
             }
             registry.hookExecutable(ruleId, hookId, doWorkMethod) { chain ->
-                if (ConfigBridge.isPointEnabled(targetPkg, HookRuleCatalog.RULE_XIAOAI_CLOUD_DICTPACK_SYNC) &&
-                    !ConfigBridge.isCloudEnabled(ImeTarget.XIAOAI)
-                ) {
+                if (XiaoAiPrivacyPolicy.shouldBlockCloudService(ConfigBridge.current, ruleId)) {
                     val successResult = runCatching { workSuccessCtor?.newInstance() }.getOrNull()
                     if (successResult != null) {
                         registry.incrementBlocked(ruleId)
@@ -2361,11 +2355,11 @@ object XiaoAiHookPack : ImeHookPack {
             }
         }
         registry.hookExecutable(ruleId, "dictpack_http_b", catalogHttpMethod) { chain ->
-            if (ConfigBridge.isPointEnabled(targetPkg, HookRuleCatalog.RULE_XIAOAI_CLOUD_DICTPACK_SYNC)) {
-                if (!ConfigBridge.isCloudEnabled(ImeTarget.XIAOAI)) {
-                    registry.incrementBlocked(ruleId)
-                    return@hookExecutable ""
-                }
+            if (XiaoAiPrivacyPolicy.shouldBlockCloudService(ConfigBridge.current, ruleId)) {
+                registry.incrementBlocked(ruleId)
+                return@hookExecutable ""
+            }
+            if (ConfigBridge.isPointEnabled(targetPkg, ruleId)) {
                 val args = chain.args
                 if (args.size >= 2 && args[1] is Map<*, *>) {
                     val sanitized = XiaoAiPrivacyPolicy.sanitizeDictSyncParams(args[1] as Map<*, *>)

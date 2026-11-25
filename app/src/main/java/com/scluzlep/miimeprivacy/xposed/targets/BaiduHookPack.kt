@@ -1569,8 +1569,14 @@ object BaiduHookPack : ImeHookPack {
         val cursorRuleId = HookRuleCatalog.RULE_BAIDU_CONTEXT_CURSOR_AND_AI
         val hostPkgRuleId = HookRuleCatalog.RULE_BAIDU_CONTEXT_HOST_PACKAGE
 
-        // 9) baidu.cloud.stream_gate: x00.b#c()
-        registry.installRuleIfEnabled(streamGateRuleId) {
+        // 9) baidu.cloud.stream_gate: x00.b#c() + IptCloudStream#send
+        // Global Cloud Input (`纯本地`) ALWAYS blocks cloud input while Baidu is managed, even if
+        // `RULE_BAIDU_CLOUD_STREAM_GATE` is toggled off; the rule toggle controls diagnostic gating.
+        val targetManaged = ConfigBridge.isTargetManaged(ImeTarget.BAIDU)
+        val streamGateEnabledAtInstall = isPointEnabled(streamGateRuleId)
+        if (!targetManaged) {
+            registry.reportSkipped(streamGateRuleId, "已暂停接管")
+        } else {
             hookSimpleBlock(
                 registry = registry,
                 ruleId = streamGateRuleId,
@@ -1592,15 +1598,17 @@ object BaiduHookPack : ImeHookPack {
                     }
                 ),
                 shouldBlock = {
-                    isPointEnabled(streamGateRuleId) && !ConfigBridge.isCloudEnabled(ImeTarget.BAIDU)
+                    ConfigBridge.isTargetManaged(ImeTarget.BAIDU) && !ConfigBridge.isCloudEnabled(ImeTarget.BAIDU)
                 },
                 blockedResult = { false }
             )
-        }
 
-        // Shared IptCloudStream#send(int, byte[], int):int (types 4/5 -> realtime_stats, else -> stream_gate)
-        if (isPointEnabled(streamGateRuleId) || isPointEnabled(realtimeRuleId)) {
-            val primaryRuleId = if (isPointEnabled(streamGateRuleId)) streamGateRuleId else realtimeRuleId
+            // Shared IptCloudStream#send(int, byte[], int):int (types 4/5 -> realtime_stats, else -> global cloud gate)
+            val primaryRuleId = if (streamGateEnabledAtInstall || !isPointEnabled(realtimeRuleId)) {
+                streamGateRuleId
+            } else {
+                realtimeRuleId
+            }
             val iptSendResult = resolver.resolveMethod(
                 cacheKey = "baidu:ipt_cloud_stream_send",
                 fastPath = { cl ->
@@ -1631,7 +1639,7 @@ object BaiduHookPack : ImeHookPack {
                 resolveResult = iptSendResult
             ) { chain ->
                 val type = (chain.getArg(0) as? Int) ?: -1
-                val cloudAllowed = if (isPointEnabled(streamGateRuleId)) {
+                val cloudAllowed = if (ConfigBridge.isTargetManaged(ImeTarget.BAIDU)) {
                     ConfigBridge.isCloudEnabled(ImeTarget.BAIDU)
                 } else {
                     true
@@ -1653,6 +1661,10 @@ object BaiduHookPack : ImeHookPack {
                     }
                     StreamSendDecision.PROCEED -> chain.proceed()
                 }
+            }
+
+            if (!streamGateEnabledAtInstall) {
+                registry.reportSkipped(streamGateRuleId, "规则已关闭")
             }
         }
 

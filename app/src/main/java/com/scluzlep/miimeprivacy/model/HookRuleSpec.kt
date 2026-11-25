@@ -269,8 +269,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_SOGOU_CLOUD_GATEWAY_AND_PIGGYBACK,
             target = ImeTarget.SOGOU,
-            title = "云网关与夹带拦截",
-            description = "管控云端请求网关并剥离夹带遥测载荷",
+            title = "云网关夹带拦截",
+            description = "剥离云网关夹带遥测载荷与静默回传",
             category = RuleCategory.CLOUD_PRIVACY,
             defaultEnabled = true,
             critical = true,
@@ -529,8 +529,8 @@ object HookRuleCatalog {
         HookRuleSpec(
             ruleId = RULE_BAIDU_CLOUD_STREAM_GATE,
             target = ImeTarget.BAIDU,
-            title = "云输入流门控",
-            description = "纯本地模式下彻底切断百度云端候选请求",
+            title = "云输入流隐私加固",
+            description = "加固云输入流隐私状态，纯本地由总览控制",
             category = RuleCategory.CLOUD_PRIVACY,
             defaultEnabled = true,
             critical = true,
@@ -792,7 +792,7 @@ object HookRuleCatalog {
             ruleId = RULE_XIAOAI_CLOUD_DICTPACK_SYNC,
             target = ImeTarget.XIAOAI,
             title = "词库包同步脱敏",
-            description = "本地模式下阻断云端词库同步与个性化下发",
+            description = "脱敏词库包同步参数，纯本地由总览控制",
             category = RuleCategory.CLOUD_PRIVACY,
             defaultEnabled = true,
             legacySwitchKey = PrivacyConfig.KEY_SANITIZE_CLOUD_PAYLOAD

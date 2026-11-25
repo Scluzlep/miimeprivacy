@@ -1389,161 +1389,164 @@ object SogouHookPack : ImeHookPack {
         registry: HookRegistry
     ) {
         val ruleId = HookRuleCatalog.RULE_SOGOU_CLOUD_GATEWAY_AND_PIGGYBACK
+        val targetManaged = ConfigBridge.isTargetManaged(target)
         val gatewayEnabledAtInstall = isPointEnabled(ruleId)
         val mutualEnabledAtInstall = isPointEnabled(HookRuleCatalog.RULE_SOGOU_CONTEXT_MUTUAL_BIGDATA)
 
-        if (!gatewayEnabledAtInstall) {
-            registry.reportSkipped(ruleId, "规则已关闭")
+        if (!targetManaged) {
+            registry.reportSkipped(ruleId, "已暂停接管")
+            return
         }
 
         val stats = RuleStats()
 
-        if (gatewayEnabledAtInstall) {
-            val cloudSettingsCls = resolver.resolveClass(
-                cacheKey = "sogou.cloud.CloudSettings",
-                fastPathCandidates = listOf("com.sohu.inputmethod.cloud.CloudSettings"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "CloudSettings") }
-            )
-            hookResolvedMethod(
-                registry, resolver, stats, ruleId,
-                hookId = "cloud_settings_on",
-                cacheKey = "sogou.CloudSettings#isCloudSinkOn",
-                fastPath = { cl ->
-                    val cls = cloudSettingsCls.value
-                        ?: SymbolResolver.loadClassOrNull("com.sohu.inputmethod.cloud.CloudSettings", cl)
-                    SymbolResolver.findDeclaredMethodOrNull(cls, "isCloudSinkOn", Context::class.java)
-                },
-                primary = true,
-                hooker = XposedInterface.Hooker { chain ->
-                    if (!isPointEnabled(ruleId)) return@Hooker chain.proceed()
-                    ConfigBridge.isCloudEnabled(target)
+        // Global Cloud Input gates: ALWAYS installed while Sogou is managed regardless of per-rule toggles.
+        val cloudSettingsCls = resolver.resolveClass(
+            cacheKey = "sogou.cloud.CloudSettings",
+            fastPathCandidates = listOf("com.sohu.inputmethod.cloud.CloudSettings"),
+            dexKitFinder = { dk -> findClassByStrings(dk, "CloudSettings") }
+        )
+        hookResolvedMethod(
+            registry, resolver, stats, ruleId,
+            hookId = "cloud_settings_on",
+            cacheKey = "sogou.CloudSettings#isCloudSinkOn",
+            fastPath = { cl ->
+                val cls = cloudSettingsCls.value
+                    ?: SymbolResolver.loadClassOrNull("com.sohu.inputmethod.cloud.CloudSettings", cl)
+                SymbolResolver.findDeclaredMethodOrNull(cls, "isCloudSinkOn", Context::class.java)
+            },
+            primary = true,
+            hooker = XposedInterface.Hooker { chain ->
+                if (!ConfigBridge.isTargetManaged(target)) return@Hooker chain.proceed()
+                ConfigBridge.isCloudEnabled(target)
+            }
+        )
+        hookResolvedMethod(
+            registry, resolver, stats, ruleId,
+            hookId = "cloud_settings_send_down",
+            cacheKey = "sogou.CloudSettings#isCloudSinkAndSendWhenDown",
+            fastPath = { cl ->
+                val cls = cloudSettingsCls.value
+                    ?: SymbolResolver.loadClassOrNull("com.sohu.inputmethod.cloud.CloudSettings", cl)
+                SymbolResolver.findDeclaredMethodOrNull(cls, "isCloudSinkAndSendWhenDown", Context::class.java)
+            },
+            hooker = XposedInterface.Hooker { chain ->
+                if (ConfigBridge.isTargetManaged(target) && !ConfigBridge.isCloudEnabled(target)) {
+                    return@Hooker false
                 }
-            )
+                chain.proceed()
+            }
+        )
+
+        val cloudMgrRes = resolver.resolveClass(
+            cacheKey = "sogou.cloud.CloudMgr",
+            fastPathCandidates = listOf("com.sogou.inputmethod.cloud.api.ctrl.CloudMgr"),
+            dexKitFinder = { dk -> findClassByStrings(dk, "postCloudRequest", "cloud_assoc_type") }
+        )
+        val cloudMgrCls = cloudMgrRes.value
+        if (cloudMgrCls != null) {
+            val j2Class = resolver.resolveClass(
+                cacheKey = "sogou.j2",
+                fastPathCandidates = listOf("com.sohu.inputmethod.sogou.j2")
+            ).value
+            cachedCloudMgrRefs = CloudMgrRefs(cloudMgrCls, j2Class)
+            val refs = cachedCloudMgrRefs!!
+
+            listOf(
+                Triple("cloudmgr_O0", "O0", arrayOf<Class<*>>(Boolean::class.javaPrimitiveType!!)),
+                Triple("cloudmgr_m", "m", arrayOf<Class<*>>(Boolean::class.javaPrimitiveType!!)),
+                Triple("cloudmgr_P0", "P0", emptyArray())
+            ).forEach { (hookId, mName, params) ->
+                hookResolvedMethod(
+                    registry, resolver, stats, ruleId,
+                    hookId = hookId,
+                    cacheKey = "sogou.CloudMgr#$mName",
+                    fastPath = { SymbolResolver.findDeclaredMethodOrNull(cloudMgrCls, mName, *params) },
+                    hooker = XposedInterface.Hooker { chain ->
+                        if (ConfigBridge.isTargetManaged(target) && !ConfigBridge.isCloudEnabled(target)) {
+                            registry.incrementBlocked(ruleId)
+                            return@Hooker null
+                        }
+                        chain.proceed()
+                    }
+                )
+            }
+
             hookResolvedMethod(
                 registry, resolver, stats, ruleId,
-                hookId = "cloud_settings_send_down",
-                cacheKey = "sogou.CloudSettings#isCloudSinkAndSendWhenDown",
-                fastPath = { cl ->
-                    val cls = cloudSettingsCls.value
-                        ?: SymbolResolver.loadClassOrNull("com.sohu.inputmethod.cloud.CloudSettings", cl)
-                    SymbolResolver.findDeclaredMethodOrNull(cls, "isCloudSinkAndSendWhenDown", Context::class.java)
+                hookId = "cloudmgr_k_assoc",
+                cacheKey = "sogou.CloudMgr#k",
+                fastPath = {
+                    SymbolResolver.findDeclaredMethodOrNull(
+                        cloudMgrCls,
+                        "k",
+                        CharSequence::class.java,
+                        Int::class.javaPrimitiveType!!,
+                        Char::class.javaPrimitiveType!!,
+                        Int::class.javaPrimitiveType!!,
+                        String::class.java,
+                        Int::class.javaPrimitiveType!!
+                    )
                 },
                 hooker = XposedInterface.Hooker { chain ->
-                    if (isPointEnabled(ruleId) && !ConfigBridge.isCloudEnabled(target)) {
-                        return@Hooker false
+                    if (ConfigBridge.isTargetManaged(target) && !ConfigBridge.isCloudEnabled(target)) {
+                        registry.incrementBlocked(ruleId)
+                        return@Hooker null
                     }
                     chain.proceed()
                 }
             )
 
-            val cloudMgrRes = resolver.resolveClass(
-                cacheKey = "sogou.cloud.CloudMgr",
-                fastPathCandidates = listOf("com.sogou.inputmethod.cloud.api.ctrl.CloudMgr"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "postCloudRequest", "cloud_assoc_type") }
-            )
-            val cloudMgrCls = cloudMgrRes.value
-            if (cloudMgrCls != null) {
-                val j2Class = resolver.resolveClass(
-                    cacheKey = "sogou.j2",
-                    fastPathCandidates = listOf("com.sohu.inputmethod.sogou.j2")
-                ).value
-                cachedCloudMgrRefs = CloudMgrRefs(cloudMgrCls, j2Class)
-                val refs = cachedCloudMgrRefs!!
-
-                listOf(
-                    Triple("cloudmgr_O0", "O0", arrayOf<Class<*>>(Boolean::class.javaPrimitiveType!!)),
-                    Triple("cloudmgr_m", "m", arrayOf<Class<*>>(Boolean::class.javaPrimitiveType!!)),
-                    Triple("cloudmgr_P0", "P0", emptyArray())
-                ).forEach { (hookId, mName, params) ->
-                    hookResolvedMethod(
-                        registry, resolver, stats, ruleId,
-                        hookId = hookId,
-                        cacheKey = "sogou.CloudMgr#$mName",
-                        fastPath = { SymbolResolver.findDeclaredMethodOrNull(cloudMgrCls, mName, *params) },
-                        hooker = XposedInterface.Hooker { chain ->
-                            if (isPointEnabled(ruleId) && !ConfigBridge.isCloudEnabled(target)) {
-                                registry.incrementBlocked(ruleId)
-                                return@Hooker null
-                            }
-                            chain.proceed()
-                        }
-                    )
+            hookResolvedMethod(
+                registry, resolver, stats, ruleId,
+                hookId = "cloudmgr_p_state",
+                cacheKey = "sogou.CloudMgr#p",
+                fastPath = { SymbolResolver.findDeclaredMethodOrNull(cloudMgrCls, "p") },
+                hooker = XposedInterface.Hooker { chain ->
+                    if (ConfigBridge.isTargetManaged(target) && !ConfigBridge.isCloudEnabled(target)) {
+                        return@Hooker 0
+                    }
+                    chain.proceed()
                 }
+            )
 
-                hookResolvedMethod(
-                    registry, resolver, stats, ruleId,
-                    hookId = "cloudmgr_k_assoc",
-                    cacheKey = "sogou.CloudMgr#k",
-                    fastPath = {
-                        SymbolResolver.findDeclaredMethodOrNull(
-                            cloudMgrCls,
-                            "k",
-                            CharSequence::class.java,
-                            Int::class.javaPrimitiveType!!,
-                            Char::class.javaPrimitiveType!!,
-                            Int::class.javaPrimitiveType!!,
-                            String::class.java,
-                            Int::class.javaPrimitiveType!!
-                        )
-                    },
-                    hooker = XposedInterface.Hooker { chain ->
-                        if (isPointEnabled(ruleId) && !ConfigBridge.isCloudEnabled(target)) {
-                            registry.incrementBlocked(ruleId)
-                            return@Hooker null
-                        }
-                        chain.proceed()
+            hookResolvedMethod(
+                registry, resolver, stats, ruleId,
+                hookId = "cloudmgr_o_refresh",
+                cacheKey = "sogou.CloudMgr#o",
+                fastPath = { SymbolResolver.findDeclaredMethodOrNull(cloudMgrCls, "o") },
+                hooker = XposedInterface.Hooker { chain ->
+                    val thisObj = chain.getThisObject()
+                    val cfg = ConfigBridge.current
+                    val managed = cfg.isImeManaged(target)
+                    val forceOn = managed && cfg.cloudOverrideFor(target) == CloudOverride.FORCE_ON
+                    val currentM = runCatching { refs.fieldM?.getInt(thisObj) ?: 0 }.getOrDefault(0)
+                    val transition = SogouPayloadSanitizer.resolveCloudMgrStateTransition(
+                        currentState = currentM,
+                        savedPriorState = refs.forcedPriorM.get(),
+                        forceOn = forceOn
+                    )
+                    if (transition.newState != null) {
+                        runCatching { refs.fieldM?.setInt(thisObj, transition.newState) }
                     }
-                )
+                    refs.forcedPriorM.set(transition.nextSavedPriorState)
 
-                hookResolvedMethod(
-                    registry, resolver, stats, ruleId,
-                    hookId = "cloudmgr_p_state",
-                    cacheKey = "sogou.CloudMgr#p",
-                    fastPath = { SymbolResolver.findDeclaredMethodOrNull(cloudMgrCls, "p") },
-                    hooker = XposedInterface.Hooker { chain ->
-                        if (isPointEnabled(ruleId) && !ConfigBridge.isCloudEnabled(target)) {
-                            return@Hooker 0
-                        }
-                        chain.proceed()
+                    if (managed && !cfg.effectiveCloudEnabled(target)) {
+                        stopCloudMgrLocked(thisObj, refs)
+                        registry.incrementBlocked(ruleId)
+                        return@Hooker null
                     }
-                )
+                    chain.proceed()
+                }
+            )
+        } else {
+            stats.record(registry, ruleId, "cloud_mgr_class", cloudMgrRes, hooked = false)
+        }
 
-                hookResolvedMethod(
-                    registry, resolver, stats, ruleId,
-                    hookId = "cloudmgr_o_refresh",
-                    cacheKey = "sogou.CloudMgr#o",
-                    fastPath = { SymbolResolver.findDeclaredMethodOrNull(cloudMgrCls, "o") },
-                    hooker = XposedInterface.Hooker { chain ->
-                        val thisObj = chain.getThisObject()
-                        val cfg = ConfigBridge.current
-                        val gatewayOn = isPointEnabled(ruleId)
-                        val forceOn = gatewayOn && cfg.cloudOverrideFor(target) == CloudOverride.FORCE_ON
-                        val currentM = runCatching { refs.fieldM?.getInt(thisObj) ?: 0 }.getOrDefault(0)
-                        val transition = SogouPayloadSanitizer.resolveCloudMgrStateTransition(
-                            currentState = currentM,
-                            savedPriorState = refs.forcedPriorM.get(),
-                            forceOn = forceOn
-                        )
-                        if (transition.newState != null) {
-                            runCatching { refs.fieldM?.setInt(thisObj, transition.newState) }
-                        }
-                        refs.forcedPriorM.set(transition.nextSavedPriorState)
+        registerLiveCloudConfigListener(registry)
 
-                        if (gatewayOn && !cfg.effectiveCloudEnabled(target)) {
-                            stopCloudMgrLocked(thisObj, refs)
-                            registry.incrementBlocked(ruleId)
-                            return@Hooker null
-                        }
-                        chain.proceed()
-                    }
-                )
-            } else {
-                stats.record(registry, ruleId, "cloud_mgr_class", cloudMgrRes, hooked = false)
-            }
-
-            registerLiveCloudConfigListener(registry)
-
-            // Anti-Piggybacking: com.sohu.inputmethod.sogou.v2#{l, e}
+        // Anti-Piggybacking: com.sohu.inputmethod.sogou.v2#{l, e} gated on RULE_SOGOU_CLOUD_GATEWAY_AND_PIGGYBACK
+        if (gatewayEnabledAtInstall) {
             val v2Res = resolver.resolveClass(
                 cacheKey = "sogou.v2",
                 fastPathCandidates = listOf("com.sohu.inputmethod.sogou.v2"),
@@ -1574,8 +1577,9 @@ object SogouHookPack : ImeHookPack {
             )
         }
 
-        // Shared WebSocket & InputRequests senders (gateway cloud blocking + mutual_bigdata blocking)
-        if (gatewayEnabledAtInstall || mutualEnabledAtInstall) {
+        // Shared WebSocket & InputRequests senders: ALWAYS installed while Sogou is managed so global
+        // pure-local cloud blocking cannot be bypassed; mutual_bigdata remains independently gated.
+        run {
             val reqTypeMethodRef = AtomicReference<Method?>(null)
             val failMethodRef = AtomicReference<Method?>(null)
 
@@ -1592,7 +1596,11 @@ object SogouHookPack : ImeHookPack {
                 }
             }
 
-            val wsRuleId = if (gatewayEnabledAtInstall) ruleId else HookRuleCatalog.RULE_SOGOU_CONTEXT_MUTUAL_BIGDATA
+            val wsRuleId = if (gatewayEnabledAtInstall || !mutualEnabledAtInstall) {
+                ruleId
+            } else {
+                HookRuleCatalog.RULE_SOGOU_CONTEXT_MUTUAL_BIGDATA
+            }
             val wsStats = if (gatewayEnabledAtInstall) stats else null
 
             val wsSenderCls = resolver.resolveClass(
@@ -1654,13 +1662,12 @@ object SogouHookPack : ImeHookPack {
                     resolveReqMethods(reqObj)
                     val reqType = runCatching { reqTypeMethodRef.get()?.invoke(reqObj) as? Int }.getOrNull()
                         ?: return@Hooker chain.proceed()
-                    val gwOn = isPointEnabled(ruleId)
                     val mutualOn = isPointEnabled(HookRuleCatalog.RULE_SOGOU_CONTEXT_MUTUAL_BIGDATA)
                     when (
                         SogouPayloadSanitizer.evaluateWebSocketRequest(
                             requestType = reqType,
                             targetManaged = ConfigBridge.isTargetManaged(target),
-                            cloudEnabled = !gwOn || ConfigBridge.isCloudEnabled(target),
+                            cloudEnabled = ConfigBridge.isCloudEnabled(target),
                             blockMutualData = mutualOn
                         )
                     ) {
@@ -1716,13 +1723,12 @@ object SogouHookPack : ImeHookPack {
                     resolveReqMethods(reqObj)
                     val reqType = runCatching { reqTypeMethodRef.get()?.invoke(reqObj) as? Int }.getOrNull()
                         ?: return@Hooker chain.proceed()
-                    val gwOn = isPointEnabled(ruleId)
                     val mutualOn = isPointEnabled(HookRuleCatalog.RULE_SOGOU_CONTEXT_MUTUAL_BIGDATA)
                     when (
                         SogouPayloadSanitizer.evaluateWebSocketRequest(
                             requestType = reqType,
                             targetManaged = ConfigBridge.isTargetManaged(target),
-                            cloudEnabled = !gwOn || ConfigBridge.isCloudEnabled(target),
+                            cloudEnabled = ConfigBridge.isCloudEnabled(target),
                             blockMutualData = mutualOn
                         )
                     ) {
@@ -1743,6 +1749,8 @@ object SogouHookPack : ImeHookPack {
 
         if (gatewayEnabledAtInstall) {
             stats.finalizeRule(registry, ruleId, "CloudGatewayPiggyback")
+        } else {
+            registry.reportSkipped(ruleId, "规则已关闭")
         }
     }
 
@@ -3213,10 +3221,8 @@ object SogouHookPack : ImeHookPack {
         val listener: (PrivacyConfig, PrivacyConfig) -> Unit = { oldCfg, newCfg ->
             val cloudChanged = oldCfg.effectiveCloudEnabled(target) != newCfg.effectiveCloudEnabled(target)
             val overrideChanged = oldCfg.cloudOverrideFor(target) != newCfg.cloudOverrideFor(target)
-            val gwRuleChanged = oldCfg.isRuleEnabled(HookRuleCatalog.RULE_SOGOU_CLOUD_GATEWAY_AND_PIGGYBACK) !=
-                newCfg.isRuleEnabled(HookRuleCatalog.RULE_SOGOU_CLOUD_GATEWAY_AND_PIGGYBACK)
 
-            if (newCfg.isImeManaged(target) && (cloudChanged || overrideChanged || gwRuleChanged)) {
+            if (newCfg.isImeManaged(target) && (cloudChanged || overrideChanged)) {
                 val refs = cachedCloudMgrRefs
                 val instance = runCatching { refs?.fieldZ?.get(null) }.getOrNull()
                 if (refs != null && instance != null && refs.methodO != null) {

@@ -228,17 +228,19 @@ jobs:
           assert '"Scluzlep"' in settings, "SettingsTab missing Scluzlep developer credit"
           assert "https://github.com/Scluzlep/miimeprivacy" in settings, "SettingsTab missing GitHub URL"
           assert "exportConfigJson" in settings and "importConfigJson" in settings, "SettingsTab missing JSON import/export"
-          for removed in ("关于与安全边界", "Xposed 与签名校验规范", "已审计目标输入法基准版本", "透明与克制原则"):
+          for removed in ("关于与安全边界", "Xposed 与签名校验规范", "已审计目标输入法基准版本", "透明与克制原则", "dexkit_cache_card", "dexkit_cache_title"):
               assert removed not in settings, f"SettingsTab still contains removed section: {removed}"
 
           overview = pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/ui/screens/OverviewTab.kt").read_text(encoding="utf-8")
+          assert "GlobalCloudCard" in overview and "allowCloudInput" in overview, "OverviewTab missing GlobalCloudCard/allowCloudInput"
           assert "清除 DexKit 符号缓存" in overview, "OverviewTab missing clear DexKit cache button"
           assert "当前解析方式" in overview, "OverviewTab missing resolve method label"
 
           rules_tab = pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/ui/screens/RulesTab.kt").read_text(encoding="utf-8")
+          assert "put(it, true)" not in rules_tab, "RulesTab must not default-expand all categories via put(it, true)"
+          assert "ImeTarget" in rules_tab and "RuleCategory" in rules_tab, "RulesTab missing 3-level ImeTarget/RuleCategory grouping"
           assert "formatRuleStatusBadge" in rules_tab, "RulesTab missing formatRuleStatusBadge"
           assert "setRuleEnabled" in rules_tab and "resetPackageDefaults" in rules_tab, "RulesTab missing fine-grained v2 rule controls"
-          assert "RuleCategory" in rules_tab, "RulesTab missing RuleCategory grouping"
 
           for test_file in (
               "app/src/test/java/com/scluzlep/miimeprivacy/config/PrivacyConfigV2Test.kt",

@@ -41,7 +41,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.scluzlep.miimeprivacy.BuildConfig
 import com.scluzlep.miimeprivacy.config.MonetPaletteStyle
-import com.scluzlep.miimeprivacy.config.SymbolResolveMode
 import com.scluzlep.miimeprivacy.config.ThemeMode
 import com.scluzlep.miimeprivacy.ui.theme.MiInnerShape
 import com.scluzlep.miimeprivacy.ui.theme.MiThemeExtras
@@ -261,91 +260,6 @@ fun SettingsTab(
                                 ColorSwatchItem("卡片", colors.surfaceContainerHigh)
                             }
                         }
-                    }
-                }
-            }
-        }
-
-        item(key = "dexkit_cache_title") {
-            SmallTitle(
-                text = "DexKit 符号缓存",
-                insideMargin = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
-            )
-        }
-
-        item(key = "dexkit_cache_card") {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                insideMargin = PaddingValues(16.dp)
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    state.imeCards.forEach { cardModel ->
-                        Surface(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = MiInnerShape,
-                            color = colors.surfaceVariant
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .padding(end = 8.dp),
-                                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                                ) {
-                                    Text(
-                                        text = cardModel.target.displayName,
-                                        style = MiuixTheme.textStyles.body2,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = colors.onSurfaceContainer
-                                    )
-                                    Text(
-                                        text = cardModel.cardResolveSummaryText,
-                                        style = MiuixTheme.textStyles.footnote1,
-                                        color = colors.onSurfaceVariantSummary
-                                    )
-                                }
-                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    val nextMode = if (cardModel.resolveMode == SymbolResolveMode.DYNAMIC) {
-                                        SymbolResolveMode.AUTO
-                                    } else {
-                                        SymbolResolveMode.DYNAMIC
-                                    }
-                                    TextButton(
-                                        text = if (cardModel.resolveMode == SymbolResolveMode.DYNAMIC) "切自动" else "切动态",
-                                        onClick = { controller.setImeResolveMode(cardModel.target, nextMode) },
-                                        insideMargin = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-                                    )
-                                    TextButton(
-                                        text = "清缓存",
-                                        enabled = cardModel.canClearSymbolCache,
-                                        onClick = { controller.clearImeSymbolCache(cardModel.target) },
-                                        insideMargin = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    Button(
-                        onClick = controller::clearAllSymbolCaches,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(
-                            color = statusColors.warningContainer,
-                            contentColor = statusColors.onWarningContainer
-                        )
-                    ) {
-                        Text(
-                            text = "清除全部 DexKit 符号缓存",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = statusColors.onWarningContainer
-                        )
                     }
                 }
             }

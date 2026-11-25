@@ -111,9 +111,21 @@ class XiaoAiHookPackTest {
         assertTrue(XiaoAiPrivacyPolicy.shouldBlockCloudService(perImeOff, HookRuleCatalog.RULE_XIAOAI_CLOUD_TRANSLATE_AND_TAIYI))
         assertTrue(XiaoAiPrivacyPolicy.shouldBlockCloudService(perImeOff, HookRuleCatalog.RULE_XIAOAI_CLOUD_DICTPACK_SYNC))
 
-        // Global cloud off -> FOLLOW_GLOBAL blocks, FORCE_ON stays working with sanitization
+        // Global cloud off -> FOLLOW_GLOBAL blocks even when individual cloud rule is toggled off;
+        // FORCE_ON stays working with sanitization; unmanaged XiaoAi never blocks.
         val globalCloudOff = defaultCfg.copy(allowCloudInput = false)
         assertTrue(XiaoAiPrivacyPolicy.shouldBlockCloudService(globalCloudOff, HookRuleCatalog.RULE_XIAOAI_CLOUD_MICLAW_LLM))
+
+        val globalCloudOffRuleDisabled = globalCloudOff
+            .withRuleOverride(HookRuleCatalog.RULE_XIAOAI_CLOUD_MICLAW_LLM, false)
+            .withRuleOverride(HookRuleCatalog.RULE_XIAOAI_CLOUD_SPEECH_ASR, false)
+            .withRuleOverride(HookRuleCatalog.RULE_XIAOAI_CLOUD_TRANSLATE_AND_TAIYI, false)
+            .withRuleOverride(HookRuleCatalog.RULE_XIAOAI_CLOUD_DICTPACK_SYNC, false)
+        assertTrue(XiaoAiPrivacyPolicy.shouldBlockCloudService(globalCloudOffRuleDisabled, HookRuleCatalog.RULE_XIAOAI_CLOUD_MICLAW_LLM))
+        assertTrue(XiaoAiPrivacyPolicy.shouldBlockCloudService(globalCloudOffRuleDisabled, HookRuleCatalog.RULE_XIAOAI_CLOUD_SPEECH_ASR))
+        assertTrue(XiaoAiPrivacyPolicy.shouldBlockCloudService(globalCloudOffRuleDisabled, HookRuleCatalog.RULE_XIAOAI_CLOUD_TRANSLATE_AND_TAIYI))
+        assertTrue(XiaoAiPrivacyPolicy.shouldBlockCloudService(globalCloudOffRuleDisabled, HookRuleCatalog.RULE_XIAOAI_CLOUD_DICTPACK_SYNC))
+        assertFalse(XiaoAiPrivacyPolicy.shouldBlockCloudService(globalCloudOffRuleDisabled.copy(xiaoaiManaged = false), HookRuleCatalog.RULE_XIAOAI_CLOUD_MICLAW_LLM))
 
         val forcedOnWhileGlobalOff = globalCloudOff.copy(xiaoaiCloudOverride = CloudOverride.FORCE_ON)
         assertFalse(XiaoAiPrivacyPolicy.shouldBlockCloudService(forcedOnWhileGlobalOff, HookRuleCatalog.RULE_XIAOAI_CLOUD_MICLAW_LLM))

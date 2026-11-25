@@ -136,14 +136,14 @@ data class TargetRuleOverview(
 
 fun ruleCategoryLabel(category: RuleCategory): String = when (category) {
     RuleCategory.PRIVACY_GATE -> "隐私门控"
-    RuleCategory.DEVICE_ID -> "设备标识屏蔽"
-    RuleCategory.TELEMETRY -> "遥测与埋点拦截"
-    RuleCategory.CLOUD_PRIVACY -> "云端隐私脱敏"
+    RuleCategory.DEVICE_ID -> "设备标识"
+    RuleCategory.TELEMETRY -> "遥测与埋点"
+    RuleCategory.CLOUD_PRIVACY -> "云端脱敏"
     RuleCategory.CONTEXT_STRIP -> "上下文剥离"
-    RuleCategory.CLIPBOARD -> "剪贴板保护"
-    RuleCategory.SCAN_AND_LOCATION -> "扫描与定位拦截"
+    RuleCategory.CLIPBOARD -> "剪贴板"
+    RuleCategory.SCAN_AND_LOCATION -> "扫描与定位"
     RuleCategory.DYNAMIC_AND_NET -> "动态加载与网络"
-    RuleCategory.UI_ENHANCE -> "界面与悬浮增强"
+    RuleCategory.UI_ENHANCE -> "界面与悬浮"
 }
 
 /**
@@ -516,7 +516,7 @@ class PrivacyUiController(context: Context) {
     private val _selectedTab = MutableStateFlow(MainTab.OVERVIEW)
     val selectedTab: StateFlow<MainTab> = _selectedTab.asStateFlow()
 
-    private val _selectedRuleFilter = MutableStateFlow(RuleTargetFilter.SOGOU)
+    private val _selectedRuleFilter = MutableStateFlow(RuleTargetFilter.ALL)
     val selectedRuleFilter: StateFlow<RuleTargetFilter> = _selectedRuleFilter.asStateFlow()
 
     private val _installedImes = MutableStateFlow<Map<ImeTarget, InstalledImeInfo>>(emptyMap())
