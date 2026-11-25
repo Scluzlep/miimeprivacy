@@ -90,10 +90,75 @@ object BaiduJsonSanitizer {
         blockRemoteLogSalvage && selector == 5
 
     /**
-     * Returns `true` ONLY for `rj0.b` selector `1` (installed app scan task).
+     * Returns `true` ONLY for `rj0.b` selector `1` (legacy v1.x helper).
      */
     fun shouldBlockAppScanTask(selector: Int, blockContactsAndAppScan: Boolean): Boolean =
         blockContactsAndAppScan && selector == 1
+
+    /**
+     * Returns `true` for `rj0.b` installed-app scan selectors `1` (`installinfo`/`shortcutinfo`)
+     * and `4` (`instl` file upload) when `baidu.scan.app_list` is enabled.
+     */
+    fun shouldBlockAppListSelector(selector: Int, blockAppList: Boolean): Boolean =
+        blockAppList && (selector == 1 || selector == 4)
+
+    /**
+     * Returns `true` for token-exchanging, JS-bridge, background-listener, and silent DB
+     * clipboard hooks whenever their corresponding `baidu.clip.*` rule is enabled — even in
+     * normal consented mode. Foreground UI readers are blocked only when
+     * [strictReadersEnabled] is on or when consent/privacy mode requires guarding.
+     */
+    fun shouldBlockUnauthorizedClipboard(
+        clipRuleEnabled: Boolean,
+        isBackgroundOrTokenOrJs: Boolean,
+        privacyAgreed: Boolean,
+        privacyInputMode: Boolean,
+        strictReadersEnabled: Boolean = false
+    ): Boolean {
+        if (isBackgroundOrTokenOrJs) return clipRuleEnabled
+        if (strictReadersEnabled) return true
+        return clipRuleEnabled && (!privacyAgreed || privacyInputMode)
+    }
+
+    /**
+     * Strips device identifier query parameters (`cuid`, `oaid`, `oid`, `ecs`) from `dj0.p.v`
+     * / `dj0.g0#e` / `com.baidu.input.b#b` query strings when `baidu.id.*` masking is enabled.
+     */
+    fun sanitizeDeviceInfoQuery(raw: String?, stripIdentifiers: Boolean): String? {
+        if (!stripIdentifiers || raw.isNullOrEmpty()) return raw
+        val parts = raw.split('&')
+        val kept = ArrayList<String>(parts.size)
+        var changed = false
+        for (part in parts) {
+            if (part.isEmpty()) continue
+            val eqIdx = part.indexOf('=')
+            val key = if (eqIdx >= 0) part.substring(0, eqIdx) else part
+            if (key == "cuid" || key == "oaid" || key == "oid" || key == "ecs") {
+                changed = true
+            } else {
+                kept.add(part)
+            }
+        }
+        if (!changed) return raw
+        val prefix = if (raw.startsWith("&")) "&" else ""
+        return if (kept.isEmpty()) "" else prefix + kept.joinToString("&")
+    }
+
+    /**
+     * Delegates hostname verification for broken Baidu `HostnameVerifier` implementations (`t6.a`,
+     * `BDSHttpRequestMaker$1`, `OcrHttpRequestMaker$1`) to the platform [defaultVerifier].
+     */
+    fun verifyTlsHostname(
+        hostname: String?,
+        session: javax.net.ssl.SSLSession?,
+        defaultVerifier: javax.net.ssl.HostnameVerifier? =
+            javax.net.ssl.HttpsURLConnection.getDefaultHostnameVerifier()
+    ): Boolean {
+        if (hostname.isNullOrBlank() || session == null || defaultVerifier == null) {
+            return false
+        }
+        return runCatching { defaultVerifier.verify(hostname, session) }.getOrDefault(false)
+    }
 
     /**
      * Returns `true` ONLY when querying or auto-enabling Baidu settings bit `1839`
@@ -121,11 +186,13 @@ object BaiduJsonSanitizer {
         emptyMethod?.let { runCatching { it.invoke(null) }.getOrNull() }
 
     /**
-     * Resolves obfuscated `pe1.x.e(Object)` (`Single.just(Object)`) for `fg.w#c(kh0.j)` so blocked
-     * `case 5` returns a non-null `Single<Boolean>` (`false`) without NPE in `.f(...)`.
+     * Resolves obfuscated `pe1.x.e(Object)` (`Single.just(Object)`) for `fg.w#c(kh0.j)` and
+     * `ph0.e#h(kh0.j)` so blocked Rx `Single` paths return a non-null `Single<Boolean>` (`false`)
+     * without NPE in `.f(...)`.
      */
     fun findRxSingleJustMethod(returnType: Class<*>): java.lang.reflect.Method? =
         runCatching { returnType.getMethod("e", Any::class.java) }.getOrNull()
+            ?: runCatching { returnType.superclass?.getMethod("e", Any::class.java) }.getOrNull()
 
     /**
      * Invokes `pe1.x.e(value)` cleanly for a boolean completion value.
