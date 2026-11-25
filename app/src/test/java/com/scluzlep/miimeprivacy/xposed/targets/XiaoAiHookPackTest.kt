@@ -4,6 +4,7 @@ import com.scluzlep.miimeprivacy.config.CloudOverride
 import com.scluzlep.miimeprivacy.config.PrivacyConfig
 import com.scluzlep.miimeprivacy.model.HookRuleCatalog
 import com.scluzlep.miimeprivacy.model.ImeTarget
+import com.scluzlep.miimeprivacy.xposed.ConfigBridge
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -14,34 +15,49 @@ import org.junit.Test
 class XiaoAiHookPackTest {
 
     @Test
-    fun targetMatchesXiaoAiAndCoversAllNonOverlayRules() {
+    fun targetMatchesXiaoAiAndCoversAllTwentyRules() {
         assertEquals(ImeTarget.XIAOAI, XiaoAiHookPack.target)
 
-        val nonOverlayIds = HookRuleCatalog.rulesFor(ImeTarget.XIAOAI)
+        val allXiaoAiRules = HookRuleCatalog.rulesFor(ImeTarget.XIAOAI)
+        assertEquals(20, allXiaoAiRules.size)
+
+        val nonOverlayIds = allXiaoAiRules
             .filterNot { it.ruleId == HookRuleCatalog.RULE_XIAOAI_OVERLAY_PILL }
             .map { it.ruleId }
             .toSet()
 
         assertEquals(19, nonOverlayIds.size)
         assertTrue(HookRuleCatalog.RULE_XIAOAI_GATE_CTA_FAIL_OPEN in nonOverlayIds)
+        assertTrue(HookRuleCatalog.RULE_XIAOAI_GATE_UNLOCK_DEGRADE_BYPASS in nonOverlayIds)
+        assertTrue(HookRuleCatalog.RULE_XIAOAI_ID_ANTIHOOK_AND_SEC_REPORT in nonOverlayIds)
+        assertTrue(HookRuleCatalog.RULE_XIAOAI_ID_OAID_INSID_PHONENUM in nonOverlayIds)
         assertTrue(HookRuleCatalog.RULE_XIAOAI_TELEMETRY_ONETRACK in nonOverlayIds)
+        assertTrue(HookRuleCatalog.RULE_XIAOAI_TELEMETRY_PASSWORD_AND_SESSION in nonOverlayIds)
+        assertTrue(HookRuleCatalog.RULE_XIAOAI_TELEMETRY_TAIYI_AND_JANK in nonOverlayIds)
+        assertTrue(HookRuleCatalog.RULE_XIAOAI_TELEMETRY_BUGREPORT_AND_XCRASH in nonOverlayIds)
+        assertTrue(HookRuleCatalog.RULE_XIAOAI_CLOUD_MICLAW_LLM in nonOverlayIds)
+        assertTrue(HookRuleCatalog.RULE_XIAOAI_CLOUD_SCREEN_CAPTURE in nonOverlayIds)
+        assertTrue(HookRuleCatalog.RULE_XIAOAI_CLOUD_SPEECH_ASR in nonOverlayIds)
+        assertTrue(HookRuleCatalog.RULE_XIAOAI_CLOUD_TRANSLATE_AND_TAIYI in nonOverlayIds)
+        assertTrue(HookRuleCatalog.RULE_XIAOAI_CLOUD_DICTPACK_SYNC in nonOverlayIds)
+        assertTrue(HookRuleCatalog.RULE_XIAOAI_CLOUD_VOICEASSIST_LAUNCH in nonOverlayIds)
         assertTrue(HookRuleCatalog.RULE_XIAOAI_CONTEXT_HOTWORD_AICR in nonOverlayIds)
+        assertTrue(HookRuleCatalog.RULE_XIAOAI_CONTEXT_TOP_ACTIVITY_AND_PKG in nonOverlayIds)
+        assertTrue(HookRuleCatalog.RULE_XIAOAI_CONTEXT_CURSOR_PROMPT_STRIP in nonOverlayIds)
+        assertTrue(HookRuleCatalog.RULE_XIAOAI_CLIP_BACKGROUND_GUARD in nonOverlayIds)
+        assertTrue(HookRuleCatalog.RULE_XIAOAI_NET_SYSTEM_CLOUD_CONTROL in nonOverlayIds)
     }
 
     @Test
     fun ctaGateBlocksAllFailOpenPathsButPreservesExplicitUserConsent() {
         val defaultCfg = PrivacyConfig()
 
-        // Fail-open callers (!isCtaSupported, requestCtaDialog catch, resultCode=-1/-2, nested step)
         assertFalse(XiaoAiPrivacyPolicy.shouldAllowCtaAccept(defaultCfg, hasExplicitUserAccept = false))
-
-        // Genuine user accept (requestCode == 1001 && resultCode == 1 outside nested retry)
         assertTrue(XiaoAiPrivacyPolicy.shouldAllowCtaAccept(defaultCfg, hasExplicitUserAccept = true))
 
-        // Live toggles off allow existing behavior
         assertTrue(
             XiaoAiPrivacyPolicy.shouldAllowCtaAccept(
-                defaultCfg.copy(blockTelemetry = false),
+                defaultCfg.withRuleOverride(HookRuleCatalog.RULE_XIAOAI_GATE_CTA_FAIL_OPEN, false),
                 hasExplicitUserAccept = false
             )
         )
@@ -54,54 +70,54 @@ class XiaoAiHookPackTest {
     }
 
     @Test
-    fun oneTrackAndPasswordStatsGateSupportsIndependentTelemetryAndPasswordToggles() {
+    fun oneTrackAndPasswordSessionRulesSupportIndependentToggles() {
         val defaultCfg = PrivacyConfig()
-        assertTrue(XiaoAiPrivacyPolicy.shouldForceOneTrackNetworkDisabled(defaultCfg))
+        assertTrue(XiaoAiPrivacyPolicy.shouldBlockOneTrackTelemetry(defaultCfg))
         assertTrue(XiaoAiPrivacyPolicy.shouldBlockOneTrackEvent(defaultCfg, isPasswordSession = false))
-        assertTrue(XiaoAiPrivacyPolicy.shouldBlockSessionCounters(defaultCfg, isPasswordSession = true))
+        assertTrue(XiaoAiPrivacyPolicy.shouldBlockSessionStats(defaultCfg))
 
-        // Telemetry off, password stats on -> ONLY password sessions blocked
-        val passwordOnlyCfg = PrivacyConfig(blockTelemetry = false, blockPasswordStats = true)
-        assertFalse(XiaoAiPrivacyPolicy.shouldForceOneTrackNetworkDisabled(passwordOnlyCfg))
+        // OneTrack off, Password/Session on -> ONLY password sessions blocked on OneTrack
+        val passwordOnlyCfg = defaultCfg
+            .withRuleOverride(HookRuleCatalog.RULE_XIAOAI_TELEMETRY_ONETRACK, false)
+            .withRuleOverride(HookRuleCatalog.RULE_XIAOAI_TELEMETRY_PASSWORD_AND_SESSION, true)
+        assertFalse(XiaoAiPrivacyPolicy.shouldBlockOneTrackTelemetry(passwordOnlyCfg))
         assertFalse(XiaoAiPrivacyPolicy.shouldBlockOneTrackEvent(passwordOnlyCfg, isPasswordSession = false))
-        assertFalse(XiaoAiPrivacyPolicy.shouldBlockSessionCounters(passwordOnlyCfg, isPasswordSession = false))
         assertTrue(XiaoAiPrivacyPolicy.shouldBlockOneTrackEvent(passwordOnlyCfg, isPasswordSession = true))
-        assertTrue(XiaoAiPrivacyPolicy.shouldBlockSessionCounters(passwordOnlyCfg, isPasswordSession = true))
+        assertTrue(XiaoAiPrivacyPolicy.shouldBlockSessionStats(passwordOnlyCfg))
 
         // Both off -> nothing blocked
-        val offCfg = PrivacyConfig(blockTelemetry = false, blockPasswordStats = false)
+        val offCfg = passwordOnlyCfg
+            .withRuleOverride(HookRuleCatalog.RULE_XIAOAI_TELEMETRY_PASSWORD_AND_SESSION, false)
         assertFalse(XiaoAiPrivacyPolicy.shouldBlockOneTrackEvent(offCfg, isPasswordSession = true))
-        assertFalse(XiaoAiPrivacyPolicy.shouldBlockSessionCounters(offCfg, isPasswordSession = true))
+        assertFalse(XiaoAiPrivacyPolicy.shouldBlockSessionStats(offCfg))
 
         // XiaoAi unmanaged -> nothing blocked
-        val unmanagedCfg = PrivacyConfig(xiaoaiManaged = false)
-        assertFalse(XiaoAiPrivacyPolicy.shouldForceOneTrackNetworkDisabled(unmanagedCfg))
+        val unmanagedCfg = defaultCfg.copy(xiaoaiManaged = false)
+        assertFalse(XiaoAiPrivacyPolicy.shouldBlockOneTrackTelemetry(unmanagedCfg))
         assertFalse(XiaoAiPrivacyPolicy.shouldBlockOneTrackEvent(unmanagedCfg, isPasswordSession = true))
     }
 
     @Test
-    fun cloudAiPolicyPreservesWorkingCloudWhenEnabledAndBlocksWhenDisabled() {
+    fun cloudRulesPreserveWorkingCloudWhenEnabledAndBlockWhenCloudDisabled() {
         val defaultCfg = PrivacyConfig()
-        assertFalse(XiaoAiPrivacyPolicy.shouldBlockCloudAiIpc(defaultCfg))
-        assertTrue(XiaoAiPrivacyPolicy.shouldSanitizeVoiceAssistPayload(defaultCfg))
-        assertTrue(XiaoAiPrivacyPolicy.shouldStripScreenCapture(defaultCfg))
+        assertFalse(XiaoAiPrivacyPolicy.shouldBlockCloudService(defaultCfg, HookRuleCatalog.RULE_XIAOAI_CLOUD_MICLAW_LLM))
+        assertTrue(XiaoAiPrivacyPolicy.shouldSanitizeMiclawPrompt(defaultCfg))
+        assertTrue(XiaoAiPrivacyPolicy.shouldBlockScreenCapture(defaultCfg))
         assertTrue(XiaoAiPrivacyPolicy.shouldMaskSpeechHostPackage(defaultCfg))
 
-        // Per-IME FORCE_OFF blocks AI IPC cleanly
+        // Per-IME FORCE_OFF blocks AI cloud services cleanly
         val perImeOff = defaultCfg.copy(xiaoaiCloudOverride = CloudOverride.FORCE_OFF)
-        assertTrue(XiaoAiPrivacyPolicy.shouldBlockCloudAiIpc(perImeOff))
-        assertTrue(XiaoAiPrivacyPolicy.shouldStripScreenCapture(perImeOff))
-        assertFalse(XiaoAiPrivacyPolicy.shouldMaskSpeechHostPackage(perImeOff))
+        assertTrue(XiaoAiPrivacyPolicy.shouldBlockCloudService(perImeOff, HookRuleCatalog.RULE_XIAOAI_CLOUD_MICLAW_LLM))
+        assertTrue(XiaoAiPrivacyPolicy.shouldBlockCloudService(perImeOff, HookRuleCatalog.RULE_XIAOAI_CLOUD_TRANSLATE_AND_TAIYI))
+        assertTrue(XiaoAiPrivacyPolicy.shouldBlockCloudService(perImeOff, HookRuleCatalog.RULE_XIAOAI_CLOUD_DICTPACK_SYNC))
 
         // Global cloud off -> FOLLOW_GLOBAL blocks, FORCE_ON stays working with sanitization
         val globalCloudOff = defaultCfg.copy(allowCloudInput = false)
-        assertTrue(XiaoAiPrivacyPolicy.shouldBlockCloudAiIpc(globalCloudOff))
-        assertFalse(XiaoAiPrivacyPolicy.shouldMaskSpeechHostPackage(globalCloudOff))
+        assertTrue(XiaoAiPrivacyPolicy.shouldBlockCloudService(globalCloudOff, HookRuleCatalog.RULE_XIAOAI_CLOUD_MICLAW_LLM))
 
         val forcedOnWhileGlobalOff = globalCloudOff.copy(xiaoaiCloudOverride = CloudOverride.FORCE_ON)
-        assertFalse(XiaoAiPrivacyPolicy.shouldBlockCloudAiIpc(forcedOnWhileGlobalOff))
-        assertTrue(XiaoAiPrivacyPolicy.shouldSanitizeVoiceAssistPayload(forcedOnWhileGlobalOff))
-        assertTrue(XiaoAiPrivacyPolicy.shouldMaskSpeechHostPackage(forcedOnWhileGlobalOff))
+        assertFalse(XiaoAiPrivacyPolicy.shouldBlockCloudService(forcedOnWhileGlobalOff, HookRuleCatalog.RULE_XIAOAI_CLOUD_MICLAW_LLM))
+        assertTrue(XiaoAiPrivacyPolicy.shouldSanitizeMiclawPrompt(forcedOnWhileGlobalOff))
     }
 
     @Test
@@ -114,16 +130,14 @@ class XiaoAiHookPackTest {
             [has_screenshot:true]
         """.trimIndent()
 
-        // Default config: maskHostPackage=true, stripCursorContext=true, sanitizeCloudPayload=true
         val defaultSanitized = XiaoAiPrivacyPolicy.sanitizeAgentPrompt(rawPrompt, PrivacyConfig())
         assertEquals("[user_text:请把这段话润色为正式语气]", defaultSanitized)
 
         // Mask host only -> keeps peer_text & has_screenshot, removes app tag
-        val hostOnlyCfg = PrivacyConfig(
-            maskHostPackage = true,
-            stripCursorContext = false,
-            sanitizeCloudPayload = false
-        )
+        val hostOnlyCfg = PrivacyConfig()
+            .withRuleOverride(HookRuleCatalog.RULE_XIAOAI_CONTEXT_TOP_ACTIVITY_AND_PKG, true)
+            .withRuleOverride(HookRuleCatalog.RULE_XIAOAI_CONTEXT_CURSOR_PROMPT_STRIP, false)
+            .withRuleOverride(HookRuleCatalog.RULE_XIAOAI_CLOUD_SCREEN_CAPTURE, false)
         val hostOnlySanitized = XiaoAiPrivacyPolicy.sanitizeAgentPrompt(rawPrompt, hostOnlyCfg)
         assertFalse(hostOnlySanitized.contains("[app:"))
         assertTrue(hostOnlySanitized.contains("[user_text:请把这段话润色为正式语气]"))
@@ -131,121 +145,86 @@ class XiaoAiHookPackTest {
         assertTrue(hostOnlySanitized.contains("[has_screenshot:true]"))
 
         // Strip cursor context only -> keeps app & has_screenshot, removes multiline peer_text
-        val cursorOnlyCfg = PrivacyConfig(
-            maskHostPackage = false,
-            stripCursorContext = true,
-            sanitizeCloudPayload = false
-        )
+        val cursorOnlyCfg = PrivacyConfig()
+            .withRuleOverride(HookRuleCatalog.RULE_XIAOAI_CONTEXT_TOP_ACTIVITY_AND_PKG, false)
+            .withRuleOverride(HookRuleCatalog.RULE_XIAOAI_CONTEXT_CURSOR_PROMPT_STRIP, true)
+            .withRuleOverride(HookRuleCatalog.RULE_XIAOAI_CLOUD_SCREEN_CAPTURE, false)
         val cursorOnlySanitized = XiaoAiPrivacyPolicy.sanitizeAgentPrompt(rawPrompt, cursorOnlyCfg)
         assertTrue(cursorOnlySanitized.contains("[app:com.tencent.mm]"))
         assertFalse(cursorOnlySanitized.contains("[peer_text:"))
         assertFalse(cursorOnlySanitized.contains("第二行敏感聊天记录"))
         assertTrue(cursorOnlySanitized.contains("[has_screenshot:true]"))
 
-        // Plain prompt without structured tags passes through unmodified
         assertEquals("帮我写一封请假邮件", XiaoAiPrivacyPolicy.sanitizeAgentPrompt("帮我写一封请假邮件", PrivacyConfig()))
-
-        // Unmanaged XiaoAi skips prompt rewriting
         assertEquals(rawPrompt, XiaoAiPrivacyPolicy.sanitizeAgentPrompt(rawPrompt, PrivacyConfig(xiaoaiManaged = false)))
     }
 
     @Test
-    fun clipboardAndHotwordTrackerPoliciesRespectLiveConfig() {
+    fun clipboardAndHotwordAicrPoliciesRespectV2RuleDefaultsAndOverrides() {
         val defaultCfg = PrivacyConfig()
         assertTrue(XiaoAiPrivacyPolicy.shouldBlockBackgroundClipboardRead(defaultCfg))
         assertFalse(
             XiaoAiPrivacyPolicy.shouldBlockBackgroundClipboardRead(
-                defaultCfg.copy(clipboardPrivacy = false)
+                defaultCfg.withRuleOverride(HookRuleCatalog.RULE_XIAOAI_CLIP_BACKGROUND_GUARD, false)
             )
         )
 
-        // Hotword tracker defaults to off while effectiveCloudEnabled(XIAOAI) == true
-        assertFalse(XiaoAiPrivacyPolicy.shouldBlockHotwordTracker(defaultCfg))
-
-        // Turning ON blockXiaoAiHotwordTracker or disabling cloud activates blocker
-        assertTrue(
-            XiaoAiPrivacyPolicy.shouldBlockHotwordTracker(
-                defaultCfg.copy(blockXiaoAiHotwordTracker = true)
-            )
-        )
-        assertTrue(
-            XiaoAiPrivacyPolicy.shouldBlockHotwordTracker(
-                defaultCfg.copy(allowCloudInput = false)
-            )
-        )
-        assertTrue(
-            XiaoAiPrivacyPolicy.shouldBlockHotwordTracker(
-                defaultCfg.copy(xiaoaiCloudOverride = CloudOverride.FORCE_OFF)
-            )
-        )
-
-        // Unmanaged XiaoAi disables blocking even if hotword tracker toggle is set
+        // v2.0: xiaoai.context.hotword_aicr is critical and defaultEnabled=true
+        assertTrue(XiaoAiPrivacyPolicy.shouldBlockHotwordAicr(defaultCfg))
         assertFalse(
-            XiaoAiPrivacyPolicy.shouldBlockHotwordTracker(
-                defaultCfg.copy(xiaoaiManaged = false, blockXiaoAiHotwordTracker = true)
+            XiaoAiPrivacyPolicy.shouldBlockHotwordAicr(
+                defaultCfg.withRuleOverride(HookRuleCatalog.RULE_XIAOAI_CONTEXT_HOTWORD_AICR, false)
+            )
+        )
+        assertFalse(
+            XiaoAiPrivacyPolicy.shouldBlockHotwordAicr(
+                defaultCfg.copy(xiaoaiManaged = false)
+            )
+        )
+
+        // Default-false rules
+        assertFalse(XiaoAiPrivacyPolicy.shouldBypassUnlockDegrade(defaultCfg))
+        assertFalse(XiaoAiPrivacyPolicy.shouldBlockVoiceAssistLaunch(defaultCfg))
+        assertFalse(XiaoAiPrivacyPolicy.shouldBlockSystemCloudControl(defaultCfg))
+        assertTrue(
+            XiaoAiPrivacyPolicy.shouldBlockSystemCloudControl(
+                defaultCfg.withRuleOverride(HookRuleCatalog.RULE_XIAOAI_NET_SYSTEM_CLOUD_CONTROL, true)
             )
         )
     }
 
     @Test
-    fun verifiedXiaoAiAnchorsAndCriticalDictPackExclusionsAreIntact() {
-        // Verified CTA fail-open anchors (never j9.e.n() or DictPack m9.a0/j5.v/r9.v)
+    fun verifiedXiaoAiAnchorsAndCriticalExclusionsAreIntact() {
         assertEquals("com.mi.ime.CtaConsentActivity", XiaoAiAnchors.CLASS_CTA_CONSENT_ACTIVITY)
         assertEquals(1001, XiaoAiAnchors.CTA_REQUEST_CODE)
         assertEquals(1, XiaoAiAnchors.CTA_RESULT_ACCEPTED)
-        assertTrue(XiaoAiAnchors.CTA_ACTIVITY_STRINGS.contains("Failed to start CTA dialog"))
-        assertTrue(XiaoAiAnchors.CTA_ACTIVITY_STRINGS.contains("CTA no permission to launch"))
-
-        // Verified OneTrack & SessionActionCollector anchors
-        assertEquals("setDisable", XiaoAiAnchors.METHOD_ONETRACK_SET_DISABLE)
-        assertEquals("v7.f", XiaoAiAnchors.CLASS_ONETRACK_HELPER)
-        assertEquals("v7.e", XiaoAiAnchors.CLASS_SESSION_COLLECTOR)
-        assertEquals("v7.g", XiaoAiAnchors.CLASS_SESSION_HOLDER)
+        assertEquals("com.xiaomi.onetrack.api.c", XiaoAiAnchors.CLASS_ONETRACK_BASE_IMP)
         assertEquals("com.xiaomi.onetrack.api.au", XiaoAiAnchors.CLASS_ONETRACK_IMP)
         assertEquals("com.xiaomi.onetrack.api.ay", XiaoAiAnchors.CLASS_ONETRACK_SYSTEM_IMP)
         assertEquals("com.xiaomi.onetrack.api.av", XiaoAiAnchors.CLASS_ONETRACK_LOCAL_IMP)
-        assertTrue(XiaoAiAnchors.ONETRACK_HELPER_STRINGS.contains("OneTrackHelper"))
-        assertTrue(XiaoAiAnchors.ONETRACK_HELPER_STRINGS.contains("Failed to restore OneTrack SDK state"))
-        assertTrue(XiaoAiAnchors.ONETRACK_HELPER_ERROR_STRINGS.contains("ime_error"))
-        assertTrue(XiaoAiAnchors.ONETRACK_LOCAL_IMP_STRINGS.contains("OneTrackLocalImp"))
-        assertTrue(
-            XiaoAiAnchors.ONETRACK_LOCAL_IMP_STRINGS.contains(
-                "Tracking data is disabled or onetrack use system net traffic only, skip it."
-            )
-        )
-        assertEquals(
-            listOf("SessionActionCollector", "duration_s", "key_cnt", "assoc_show_cnt"),
-            XiaoAiAnchors.SESSION_COLLECTOR_STRINGS
-        )
-        assertTrue(XiaoAiAnchors.SESSION_HOLDER_STRINGS.contains("newline"))
-        assertEquals(listOf("source_app"), XiaoAiAnchors.SESSION_ACTION_OTHER_STRINGS)
-        assertTrue(XiaoAiAnchors.SESSION_CACHE_STRINGS.contains("candidate_content"))
+        assertEquals("com.xiaomi.onetrack.CrashAnalysis", XiaoAiAnchors.CLASS_CRASH_ANALYSIS)
+        assertEquals("com.miui.bugreport.logprovider.DumpLogProvider", XiaoAiAnchors.CLASS_DUMP_LOG_PROVIDER)
+        assertEquals("com.xiaomi.passport.SecurityDeviceReporter", XiaoAiAnchors.CLASS_SECURITY_DEVICE_REPORTER)
+        assertEquals("com.xiaomi.account.privacy_data.master.PrivacyDataMaster", XiaoAiAnchors.CLASS_PRIVACY_DATA_MASTER)
+        assertEquals("xc.i", XiaoAiAnchors.CLASS_SENSOR_ANTIHOOK_HELPER)
+        assertEquals("fb.y5", XiaoAiAnchors.CLASS_VOICE_HOTWORD_CACHE)
+        assertEquals("ca.u", XiaoAiAnchors.CLASS_HOTWORD_INIT_TASK)
+        assertEquals("pd.a", XiaoAiAnchors.CLASS_APP_LABEL_HELPER)
+        assertEquals("i5.a0", XiaoAiAnchors.CLASS_TAIYI_APP_TRACK_RUNNABLE)
+        assertEquals("lc.f", XiaoAiAnchors.CLASS_SPEECH_MANAGER)
+        assertEquals("mb.k3", XiaoAiAnchors.CLASS_HOTWORD_CLOSURE)
+        assertEquals("u9.d", XiaoAiAnchors.CLASS_DICTPACK_SCHEDULER)
+        assertEquals("i.o0", XiaoAiAnchors.CLASS_CATALOG_HTTP_CLIENT)
+        assertEquals("o8.b", XiaoAiAnchors.CLASS_CLOUD_CONTROL_FLOW)
+        assertEquals("o8.c", XiaoAiAnchors.CLASS_CLOUD_CONTROL_HELPER)
+        assertEquals("ub.a", XiaoAiAnchors.CLASS_SCENARIO_BINDER)
+        assertEquals("t7.e", XiaoAiAnchors.CLASS_DEGRADE_LEVEL)
 
-        // Verified Cloud IPC, ClipboardMonitor & HotwordTracker anchors
-        assertEquals("k8.o", XiaoAiAnchors.CLASS_AGENT_CONNECTION)
-        assertEquals("k8.n0", XiaoAiAnchors.CLASS_MICLAW_MANAGER)
-        assertEquals("eb.r", XiaoAiAnchors.CLASS_SCREENSHOT_CAPTURE)
-        assertEquals("nc.r", XiaoAiAnchors.CLASS_TRANSLATE_ENGINE)
-        assertEquals("m8.h", XiaoAiAnchors.CLASS_SPEECH_ASR_MANAGER)
-        assertEquals("rc.b", XiaoAiAnchors.CLASS_TAIYI_MANAGER)
-        assertEquals("fb.d0", XiaoAiAnchors.CLASS_CLIPBOARD_MONITOR)
-        assertEquals("ca.w", XiaoAiAnchors.CLASS_HOTWORD_CLIENT)
-        assertEquals("ba.b", XiaoAiAnchors.CLASS_HOTWORD_EDIT_TRACKER)
-        assertTrue(XiaoAiAnchors.AGENT_BIND_STRINGS.contains("com.aios.osbot.action.EXTERNAL_AGENT"))
-        assertTrue(XiaoAiAnchors.MICLAW_FAILED_STRINGS.contains("Failed(message="))
-        assertTrue(XiaoAiAnchors.TRANSLATE_START_STRINGS.contains("Start(textLen="))
-        assertEquals(listOf("Idle"), XiaoAiAnchors.TRANSLATE_IDLE_STRINGS)
-        assertTrue(XiaoAiAnchors.TRANSLATE_ERROR_STRINGS.contains("TranslateError(code="))
-        assertTrue(XiaoAiAnchors.CLIPBOARD_MONITOR_STRINGS.contains("sensitive clip ignored"))
-        assertTrue(XiaoAiAnchors.HOTWORD_CLIENT_STRINGS.contains("com.xiaomi.aicr"))
-        assertTrue(XiaoAiAnchors.HOTWORD_CLIENT_STRINGS.contains("ime_hotword_service_version"))
-        assertTrue(XiaoAiAnchors.HOTWORD_TRACKER_STRINGS.contains("HotwordEditTracker"))
-
-        // DictPack & j9.e.n() must remain untouched
         val allAnchorClasses = listOf(
             XiaoAiAnchors.CLASS_CTA_CONSENT_ACTIVITY,
             XiaoAiAnchors.CLASS_ONETRACK_SDK,
             XiaoAiAnchors.CLASS_ONETRACK_HELPER,
+            XiaoAiAnchors.CLASS_ONETRACK_BASE_IMP,
             XiaoAiAnchors.CLASS_ONETRACK_IMP,
             XiaoAiAnchors.CLASS_ONETRACK_SYSTEM_IMP,
             XiaoAiAnchors.CLASS_ONETRACK_LOCAL_IMP,
@@ -272,64 +251,59 @@ class XiaoAiHookPackTest {
     }
 
     @Test
-    fun oneTrackImpInitAlwaysProceedsSoDelegateIsNonNullAndSetsDisable() {
-        XiaoAiOneTrackGuard.resetForTest()
+    fun oneTrackImpInitShortCircuitsBeforeProceedAndBaseGetArProvidesSafeNoOpProxy() {
         FakeOneTrackSdk.disabled = false
         val baseImp = FakeBaseOneTrackImp()
         var blockedCount = 0
+        var proceedCalled = false
 
-        // Even with blockTelemetry=true (default), proceed MUST execute so f4218a is non-null
-        // and ActivityLifecycleCallbacks#onActivityStarted -> j().a(1) never throws NPE.
+        // When telemetry is blocked, au#a short-circuits BEFORE proceed() so ba bindService never runs
+        // AND static OneTrack.b (setDisable) is NOT mutated!
         val result = XiaoAiOneTrackGuard.handleOneTrackImpInit(
             config = PrivacyConfig(),
-            oneTrackSdkClass = FakeOneTrackSdk::class.java,
             proceed = {
+                proceedCalled = true
                 baseImp.initDelegate(useSystemImp = true)
                 null
             },
             incrementBlocked = { blockedCount++ }
         )
         assertNull(result)
-        assertNotNull("c.f4218a delegate must remain non-null after onetrack_imp_init", baseImp.delegate)
-        assertTrue("OneTrack.setDisable(true) must be invoked when telemetry is blocked", FakeOneTrackSdk.disabled)
+        assertFalse("au#a must short-circuit BEFORE proceed() when OneTrack rule is enabled", proceedCalled)
+        assertNull("f4218a remains null because au#a did not construct ay/ba", baseImp.delegate)
+        assertFalse("OneTrack.setDisable must NOT be mutated by au#a short-circuit", FakeOneTrackSdk.disabled)
         assertEquals(1, blockedCount)
 
-        // Activity start simulation: c.j().a(1) must not throw NPE, and ar#a(int) is blocked cleanly
-        var delegateLifecycleProceeded = false
-        val arResult = XiaoAiOneTrackGuard.handleOneTrackArMethod(
-            config = PrivacyConfig(),
-            isPasswordSession = false,
-            returnType = Void.TYPE,
-            proceed = {
-                delegateLifecycleProceeded = true
-                baseImp.delegate!!.a(1)
-                null
-            },
-            incrementBlocked = { blockedCount++ }
-        )
-        assertNull(arResult)
-        assertFalse(delegateLifecycleProceeded)
-        assertEquals(0, (baseImp.delegate as FakeSystemImp).lifecycleCalls)
-        assertEquals(2, blockedCount)
+        // c#j() dynamic proxy fallback prevents NPE when callers invoke j().a(1)
+        val safeDelegate = XiaoAiOneTrackGuard.ensureSafeArDelegate(
+            delegateResult = baseImp.delegate,
+            arInterface = FakeAr::class.java,
+            config = PrivacyConfig()
+        ) as FakeAr
+        assertNotNull(safeDelegate)
+        safeDelegate.a(1)
+        safeDelegate.a("ev", "{}")
+        safeDelegate.b("ev2", "{}")
+        safeDelegate.a(true)
 
-        // When blockTelemetry is turned OFF, init still proceeds and clears forced disable flag
-        val disabledOffImp = FakeBaseOneTrackImp()
+        // When RULE_XIAOAI_TELEMETRY_ONETRACK is disabled, au#a proceeds normally
+        val offCfg = PrivacyConfig().withRuleOverride(HookRuleCatalog.RULE_XIAOAI_TELEMETRY_ONETRACK, false)
         XiaoAiOneTrackGuard.handleOneTrackImpInit(
-            config = PrivacyConfig(blockTelemetry = false),
-            oneTrackSdkClass = FakeOneTrackSdk::class.java,
+            config = offCfg,
             proceed = {
-                disabledOffImp.initDelegate(useSystemImp = false)
+                proceedCalled = true
+                baseImp.initDelegate(useSystemImp = false)
                 null
             },
             incrementBlocked = { blockedCount++ }
         )
-        assertNotNull(disabledOffImp.delegate)
-        assertFalse(FakeOneTrackSdk.disabled)
-        assertEquals(2, blockedCount)
+        assertTrue(proceedCalled)
+        assertNotNull(baseImp.delegate)
+        assertEquals(1, blockedCount)
     }
 
     @Test
-    fun oneTrackSystemAndLocalImpArMethodsBlockCleanlyWithoutTouchingPrivateMethods() {
+    fun oneTrackSystemAndLocalImpArMethodsBlockCleanlyAndConfigBridgePointGatingMatches() {
         val sysMethods = XiaoAiOneTrackGuard.findPublicArInterfaceMethods(FakeSystemImp::class.java)
         val localMethods = XiaoAiOneTrackGuard.findPublicArInterfaceMethods(FakeLocalImp::class.java)
 
@@ -342,12 +316,23 @@ class XiaoAiHookPackTest {
             localMethods.map { "${it.name}(${it.parameterTypes.joinToString(",") { t -> t.simpleName }})" }.toSet()
         )
 
+        ConfigBridge.detach()
+        assertTrue(ConfigBridge.isPointEnabled(ImeTarget.XIAOAI.packageName, HookRuleCatalog.RULE_XIAOAI_TELEMETRY_ONETRACK))
+        assertTrue(ConfigBridge.isPointEnabled(ImeTarget.XIAOAI.packageName, HookRuleCatalog.RULE_XIAOAI_TELEMETRY_PASSWORD_AND_SESSION))
+        assertFalse(ConfigBridge.isPointEnabled(ImeTarget.XIAOAI.packageName, HookRuleCatalog.RULE_XIAOAI_GATE_UNLOCK_DEGRADE_BYPASS))
+        assertFalse(ConfigBridge.isPointEnabled(ImeTarget.XIAOAI.packageName, HookRuleCatalog.RULE_XIAOAI_CLOUD_VOICEASSIST_LAUNCH))
+        assertFalse(ConfigBridge.isPointEnabled(ImeTarget.XIAOAI.packageName, HookRuleCatalog.RULE_XIAOAI_NET_SYSTEM_CLOUD_CONTROL))
+
+        val pwdOnlyCfg = PrivacyConfig()
+            .withRuleOverride(HookRuleCatalog.RULE_XIAOAI_TELEMETRY_ONETRACK, false)
+            .withRuleOverride(HookRuleCatalog.RULE_XIAOAI_TELEMETRY_PASSWORD_AND_SESSION, true)
+        assertFalse(pwdOnlyCfg.isRuleEnabled(HookRuleCatalog.RULE_XIAOAI_TELEMETRY_ONETRACK))
+        assertTrue(pwdOnlyCfg.isRuleEnabled(HookRuleCatalog.RULE_XIAOAI_TELEMETRY_PASSWORD_AND_SESSION))
+
         val sysImp = FakeSystemImp()
         val localImp = FakeLocalImp()
         var blockedCount = 0
 
-        // Password-only mode: non-password proceeds on both ay & av; password session blocks both
-        val pwdOnlyCfg = PrivacyConfig(blockTelemetry = false, blockPasswordStats = true)
         XiaoAiOneTrackGuard.handleOneTrackArMethod(
             config = pwdOnlyCfg,
             isPasswordSession = false,
@@ -378,12 +363,12 @@ class XiaoAiHookPackTest {
         assertEquals(0, localImp.lifecycleCalls)
         assertEquals(1, blockedCount)
 
-        // Primitive defaultReturnValue preserves type safety for boolean/numeric hooks (e.g. rh.b#L, ba IPC)
         assertEquals(false, XiaoAiOneTrackGuard.defaultReturnValue(Boolean::class.javaPrimitiveType!!))
         assertEquals(0, XiaoAiOneTrackGuard.defaultReturnValue(Int::class.javaPrimitiveType!!))
         assertEquals(0L, XiaoAiOneTrackGuard.defaultReturnValue(Long::class.javaPrimitiveType!!))
         assertEquals(0f, XiaoAiOneTrackGuard.defaultReturnValue(Float::class.javaPrimitiveType!!))
         assertEquals(0.0, XiaoAiOneTrackGuard.defaultReturnValue(Double::class.javaPrimitiveType!!))
+        assertEquals("", XiaoAiOneTrackGuard.defaultReturnValue(String::class.java))
         assertNull(XiaoAiOneTrackGuard.defaultReturnValue(Void.TYPE))
     }
 
@@ -400,23 +385,11 @@ class XiaoAiHookPackTest {
         @JvmField var trackBCalls = 0
         @JvmField var flushCalls = 0
 
-        override fun a(i: Int) {
-            lifecycleCalls++
-        }
+        override fun a(i: Int) { lifecycleCalls++ }
+        override fun a(str: String, str2: String) { trackACalls++ }
+        override fun a(z: Boolean) { flushCalls++ }
+        override fun b(str: String, str2: String) { trackBCalls++ }
 
-        override fun a(str: String, str2: String) {
-            trackACalls++
-        }
-
-        override fun a(z: Boolean) {
-            flushCalls++
-        }
-
-        override fun b(str: String, str2: String) {
-            trackBCalls++
-        }
-
-        // Extra ba.a#a() and private helper must not be matched as ar methods
         fun a() {}
 
         @Suppress("unused")
@@ -429,23 +402,11 @@ class XiaoAiHookPackTest {
         @JvmField var trackBCalls = 0
         @JvmField var flushCalls = 0
 
-        override fun a(i: Int) {
-            lifecycleCalls++
-        }
+        override fun a(i: Int) { lifecycleCalls++ }
+        override fun a(str: String, str2: String) { trackACalls++ }
+        override fun a(z: Boolean) { flushCalls++ }
+        override fun b(str: String, str2: String) { trackBCalls++ }
 
-        override fun a(str: String, str2: String) {
-            trackACalls++
-        }
-
-        override fun a(z: Boolean) {
-            flushCalls++
-        }
-
-        override fun b(str: String, str2: String) {
-            trackBCalls++
-        }
-
-        // Private boolean(String, String) helpers in av.java must not be matched as ar methods
         @Suppress("unused")
         private fun c(str: String, str2: String): Boolean = false
 
@@ -464,11 +425,5 @@ class XiaoAiHookPackTest {
     private object FakeOneTrackSdk {
         @JvmField
         var disabled: Boolean = false
-
-        @JvmStatic
-        @Suppress("unused")
-        fun setDisable(value: Boolean) {
-            disabled = value
-        }
     }
 }
