@@ -25,6 +25,7 @@ import org.luckypray.dexkit.wrap.DexClass
 import org.luckypray.dexkit.wrap.DexField
 import org.luckypray.dexkit.wrap.DexMethod
 import java.lang.reflect.Method
+import java.lang.reflect.Modifier
 
 class RealApkDexSimulationHarnessTest {
 
@@ -85,6 +86,76 @@ class RealApkDexSimulationHarnessTest {
             val fieldInstance = DexField.deserialize(sampleField.descriptor)
                 .getFieldInstance(session.classLoader)
             assertEquals(sampleField.name, fieldInstance.name)
+        }
+    }
+
+    @Test
+    fun xiaoAiClassesAndJava8InterfacesLoadDeclaredMembersWithoutClassFormatError() {
+        val session = RealApkDexSimulationHarness.openSimulation(
+            target = ImeTarget.XIAOAI,
+            resolveMode = SymbolResolveMode.DYNAMIC
+        )
+        val targetClasses = listOf(
+            "com.mi.ime.MiInputMethodService",
+            "i.o0",
+            "xc.i",
+            "kb.e",
+            "m8.h",
+            "rh.b",
+            "rb.c",
+            "pd.a"
+        )
+        val java8Interfaces = listOf(
+            "p0.z0",
+            "w.i1",
+            "b1.l",
+            "miuix.view.k"
+        )
+
+        for (className in targetClasses + java8Interfaces) {
+            val dexClassDef = session.database.classesByName[className]
+            assertNotNull("Expected $className in XiaoAi APK DEX", dexClassDef)
+
+            val loaded = Class.forName(className, false, session.classLoader)
+            assertEquals(className, loaded.name)
+
+            val declaredMethods = loaded.declaredMethods
+            val declaredCtors = loaded.declaredConstructors
+            val declaredFields = loaded.declaredFields
+            assertNotNull(declaredFields)
+
+            val expectedMethods = dexClassDef!!.methods.filter { it.name != "<init>" && it.name != "<clinit>" }
+            val actualMethodKeys = declaredMethods.map { m ->
+                Triple(
+                    m.name,
+                    m.parameterTypes.map { it.typeName } to m.returnType.typeName,
+                    Modifier.isStatic(m.modifiers)
+                )
+            }.toSet()
+            for (expected in expectedMethods) {
+                val expectedKey = Triple(
+                    expected.name,
+                    expected.paramTypeDescriptors.map { DexTypeNames.descriptorToClassName(it) } to
+                        DexTypeNames.descriptorToClassName(expected.returnTypeDescriptor),
+                    Modifier.isStatic(expected.modifiers)
+                )
+                assertTrue(
+                    "Missing or mismatched method signature for $className#${expected.name}: $expectedKey",
+                    expectedKey in actualMethodKeys
+                )
+            }
+
+            val expectedCtors = dexClassDef.methods.filter { it.name == "<init>" }
+            val actualCtorParams = declaredCtors.map { c ->
+                c.parameterTypes.map { it.typeName }
+            }.toSet()
+            for (expectedCtor in expectedCtors) {
+                val expectedParams = expectedCtor.paramTypeDescriptors.map { DexTypeNames.descriptorToClassName(it) }
+                assertTrue(
+                    "Missing constructor for $className with params $expectedParams",
+                    expectedParams in actualCtorParams
+                )
+            }
         }
     }
 

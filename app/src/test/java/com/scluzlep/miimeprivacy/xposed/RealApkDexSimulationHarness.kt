@@ -1233,11 +1233,7 @@ class DexBackedClassLoader(
     private fun buildClassBytes(classDef: ParsedClassDef): ByteArray {
         val cp = ConstantPoolBuilder()
         val isInterface = (classDef.modifiers and Modifier.INTERFACE) != 0
-        val jvmClassFlags = if (isInterface) {
-            (classDef.modifiers and 0x7611) or Modifier.INTERFACE or Modifier.ABSTRACT
-        } else {
-            (classDef.modifiers and 0x7611) or 0x0020 // ACC_SUPER
-        }
+        val jvmClassFlags = normalizeClassFlags(classDef.modifiers, isInterface)
 
         val thisClassIdx = cp.addClass(DexTypeNames.descriptorToJvmInternalName(classDef.descriptor))
         val superInternal = if (isInterface || classDef.superClassDescriptor == null) {
@@ -1255,7 +1251,7 @@ class DexBackedClassLoader(
         for (field in classDef.fields) {
             val key = "${field.name}:${field.typeDescriptor}"
             if (!seenFields.add(key)) continue
-            val jvmFlags = field.modifiers and 0x50DF
+            val jvmFlags = normalizeFieldFlags(field.modifiers, isInterface)
             fieldEntries.add(Triple(jvmFlags, cp.addUtf8(field.name), cp.addUtf8(field.typeDescriptor)))
         }
 
@@ -1263,12 +1259,11 @@ class DexBackedClassLoader(
         val seenMethods = HashSet<String>()
         val methodEntries = mutableListOf<MethodEntry>()
         for (method in classDef.methods) {
+            if (isInterface && method.name == "<init>") continue
             val methodDesc = buildMethodJvmDescriptor(method)
             val key = "${method.name}:$methodDesc"
             if (!seenMethods.add(key)) continue
-            val rawFlags = method.modifiers
-            val normalizedFlags = (rawFlags and 0x1DFF) or
-                (if ((rawFlags and 0x20000) != 0) Modifier.SYNCHRONIZED else 0)
+            val normalizedFlags = normalizeMethodFlags(method, isInterface)
             val needsCode = (normalizedFlags and (Modifier.ABSTRACT or Modifier.NATIVE)) == 0
             val paramSlots = countParamSlots(method.paramTypeDescriptors) +
                 (if ((normalizedFlags and Modifier.STATIC) != 0) 0 else 1)
@@ -1287,7 +1282,7 @@ class DexBackedClassLoader(
         val out = DataOutputStream(outBytes)
         out.writeInt(0xCAFEBABE.toInt())
         out.writeShort(0) // minor
-        out.writeShort(49) // Java 5: no StackMapTable required for stub Code attributes
+        out.writeShort(52) // Java 8: supports interface default/static methods; branchless stub Code needs no StackMapTable
         cp.writeTo(out)
         out.writeShort(jvmClassFlags)
         out.writeShort(thisClassIdx)
@@ -1325,6 +1320,90 @@ class DexBackedClassLoader(
         return outBytes.toByteArray()
     }
 
+    private fun normalizeClassFlags(rawModifiers: Int, isInterface: Boolean): Int {
+        return if (isInterface) {
+            (rawModifiers and (Modifier.PUBLIC or 0x1000 or 0x2000)) or
+                Modifier.INTERFACE or
+                Modifier.ABSTRACT
+        } else {
+            var flags = (rawModifiers and (Modifier.PUBLIC or Modifier.FINAL or Modifier.ABSTRACT or 0x1000 or 0x4000)) or
+                0x0020 // ACC_SUPER
+            if ((flags and Modifier.ABSTRACT) != 0) {
+                flags = flags and Modifier.FINAL.inv()
+            }
+            flags
+        }
+    }
+
+    private fun normalizeFieldFlags(rawModifiers: Int, isInterface: Boolean): Int {
+        if (isInterface) {
+            return (rawModifiers and 0x1000) or Modifier.PUBLIC or Modifier.STATIC or Modifier.FINAL
+        }
+        var flags = normalizeSingleVisibility(rawModifiers and 0x50DF)
+        if ((flags and Modifier.FINAL) != 0 && (flags and Modifier.VOLATILE) != 0) {
+            flags = flags and Modifier.VOLATILE.inv()
+        }
+        return flags
+    }
+
+    private fun normalizeMethodFlags(method: ParsedMethod, isInterface: Boolean): Int {
+        val raw = method.modifiers
+        val syntheticBit = raw and 0x1000
+        if (method.name == "<clinit>") {
+            return Modifier.STATIC or (raw and Modifier.STRICT) or syntheticBit
+        }
+        if (method.name == "<init>") {
+            val allowedInit = raw and (
+                Modifier.PUBLIC or Modifier.PRIVATE or Modifier.PROTECTED or
+                    0x0080 or Modifier.STRICT or 0x1000
+                )
+            return normalizeSingleVisibility(allowedInit)
+        }
+
+        // Map DEX ACC_DECLARED_SYNCHRONIZED (0x20000) -> JVM ACC_SYNCHRONIZED (0x0020),
+        // then normalize to flags allowed by JVMS 8 §4.6 for the enclosing class/interface.
+        var flags = (raw and 0x1DFF) or
+            (if ((raw and 0x20000) != 0) Modifier.SYNCHRONIZED else 0)
+
+        if (isInterface) {
+            flags = flags and (
+                Modifier.PRIVATE or Modifier.PROTECTED or
+                    Modifier.FINAL or Modifier.SYNCHRONIZED or Modifier.NATIVE
+                ).inv()
+            flags = flags or Modifier.PUBLIC
+            if ((flags and Modifier.STATIC) != 0) {
+                flags = flags and Modifier.ABSTRACT.inv()
+            }
+            if ((flags and Modifier.ABSTRACT) != 0) {
+                flags = flags and Modifier.STRICT.inv()
+            }
+            return flags
+        }
+
+        flags = normalizeSingleVisibility(flags)
+        if ((flags and Modifier.STATIC) != 0) {
+            flags = flags and Modifier.ABSTRACT.inv()
+        }
+        if ((flags and Modifier.ABSTRACT) != 0) {
+            flags = flags and (
+                Modifier.PRIVATE or Modifier.FINAL or Modifier.SYNCHRONIZED or
+                    Modifier.NATIVE or Modifier.STRICT
+                ).inv()
+        }
+        return flags
+    }
+
+    private fun normalizeSingleVisibility(flags: Int): Int {
+        val vis = flags and (Modifier.PUBLIC or Modifier.PRIVATE or Modifier.PROTECTED)
+        if (Integer.bitCount(vis) <= 1) return flags
+        val chosen = when {
+            (vis and Modifier.PUBLIC) != 0 -> Modifier.PUBLIC
+            (vis and Modifier.PROTECTED) != 0 -> Modifier.PROTECTED
+            else -> Modifier.PRIVATE
+        }
+        return (flags and (Modifier.PUBLIC or Modifier.PRIVATE or Modifier.PROTECTED).inv()) or chosen
+    }
+
     private fun buildStubClassBytes(className: String, isInterface: Boolean): ByteArray {
         val cp = ConstantPoolBuilder()
         val internal = className.replace('.', '/')
@@ -1339,7 +1418,7 @@ class DexBackedClassLoader(
         val out = DataOutputStream(outBytes)
         out.writeInt(0xCAFEBABE.toInt())
         out.writeShort(0)
-        out.writeShort(49)
+        out.writeShort(52)
         cp.writeTo(out)
         out.writeShort(
             if (isInterface) {
