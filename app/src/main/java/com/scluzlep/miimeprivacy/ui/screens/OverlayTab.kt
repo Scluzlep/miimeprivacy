@@ -401,7 +401,7 @@ private fun InteractionGuideLine(badge: String, desc: String) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.Top
+        verticalAlignment = Alignment.CenterVertically
     ) {
         MiStatusBadge(
             text = badge,

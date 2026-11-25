@@ -11,8 +11,8 @@ android {
         applicationId = "com.scluzlep.miimeprivacy"
         minSdk = 28
         targetSdk = 36
-        versionCode = System.getenv("MIIME_VERSION_CODE")?.toIntOrNull() ?: 2001001
-        versionName = System.getenv("MIIME_VERSION_NAME")?.takeIf { it.isNotBlank() } ?: "2.1"
+        versionCode = System.getenv("MIIME_VERSION_CODE")?.toIntOrNull() ?: 2002001
+        versionName = System.getenv("MIIME_VERSION_NAME")?.takeIf { it.isNotBlank() } ?: "2.2"
     }
 
     buildFeatures {

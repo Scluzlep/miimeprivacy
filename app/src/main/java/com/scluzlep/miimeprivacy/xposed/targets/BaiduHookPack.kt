@@ -23,6 +23,7 @@ import com.scluzlep.miimeprivacy.xposed.findMethod
 import org.json.JSONArray
 import org.luckypray.dexkit.query.enums.StringMatchType
 import org.luckypray.dexkit.query.matchers.MethodMatcher
+import org.luckypray.dexkit.util.DexSignUtil
 import java.io.File
 import java.io.InputStream
 import java.lang.reflect.Array as JvmArray
@@ -874,7 +875,7 @@ object BaiduHookPack : ImeHookPack {
                 )
             )
             for ((hookId, methodName, paramTypes) in sofireMethods) {
-                val paramTypeNames = paramTypes.map { it.name }.toTypedArray()
+                val paramTypeNames = paramTypes.map { DexSignUtil.getTypeName(it) }.toTypedArray()
                 hookSimpleBlock(
                     registry = registry,
                     ruleId = idRuleId,
@@ -1220,7 +1221,7 @@ object BaiduHookPack : ImeHookPack {
                 Triple("baidu.telemetry.ubc_uploadDataRequest#1", "uploadDataRequest", arrayOf(String::class.java, InputStream::class.java, Map::class.java))
             )
             for ((hookId, methodName, paramTypes) in ubcOverloads) {
-                val paramTypeNames = paramTypes.map { it.name }.toTypedArray()
+                val paramTypeNames = paramTypes.map { DexSignUtil.getTypeName(it) }.toTypedArray()
                 hookSimpleBlock(
                     registry = registry,
                     ruleId = periodicRuleId,
@@ -3992,13 +3993,13 @@ object BaiduHookPack : ImeHookPack {
                 cacheKey = fieldCacheKey,
                 fastPath = { _ -> findDeclaredFieldOrNull(method.declaringClass, primaryFieldName) },
                 dexKitFinder = { bridge ->
-                    val paramTypeNames = method.parameterTypes.map { it.name }.toTypedArray()
+                    val paramTypeNames = method.parameterTypes.map { DexSignUtil.getTypeName(it) }.toTypedArray()
                     bridge.findMethod {
                         matcher {
                             declaredClass(method.declaringClass.name, StringMatchType.Equals)
                             name(method.name, StringMatchType.Equals)
                             if (paramTypeNames.isEmpty()) paramCount(0) else paramTypes(*paramTypeNames)
-                            returnType(method.returnType.name, StringMatchType.Equals)
+                            returnType(DexSignUtil.getTypeName(method.returnType), StringMatchType.Equals)
                         }
                     }.singleOrNull()
                         ?.usingFields

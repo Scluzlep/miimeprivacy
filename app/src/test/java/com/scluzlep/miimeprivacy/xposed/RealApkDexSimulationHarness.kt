@@ -1951,16 +1951,11 @@ class ApkBytecodeDexKitExecutor(
     }
 
     private fun matchesTypeNameOrDescriptor(
-        descriptor: String,
+        @Suppress("UNUSED_PARAMETER") descriptor: String,
         className: String,
         matcher: StringMatcher
     ): Boolean {
-        if (matchesString(className, matcher)) return true
-        val pattern = matcher.value
-        if (!pattern.isNullOrEmpty() && (pattern.startsWith("L") || pattern.startsWith("["))) {
-            if (matchesString(descriptor, matcher)) return true
-        }
-        return false
+        return matchesString(className, matcher)
     }
 
     private fun matchesString(target: String, matcher: StringMatcher): Boolean {

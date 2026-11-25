@@ -117,7 +117,7 @@ jobs:
             echo "::error::Legacy xposedminversion metadata present"
             exit 1
           fi
-      - name: Verify v2.1 integration invariants
+      - name: Verify v2.2 integration invariants
         shell: bash
         env:
           GITHUB_REF: ${{ github.ref }}
@@ -159,8 +159,8 @@ jobs:
           gradle_text = pathlib.Path("app/build.gradle.kts").read_text(encoding="utf-8")
           code_match = re.search(r'MIIME_VERSION_CODE[^\n]*\?:\s*(\d+)', gradle_text)
           name_match = re.search(r'MIIME_VERSION_NAME[^\n]*\?:\s*"([^"]+)"', gradle_text)
-          assert code_match and code_match.group(1) == "2001001", f"versionCode default must be 2001001, got {code_match.group(1) if code_match else None}"
-          assert name_match and name_match.group(1) == "2.1", f"versionName default must be '2.1', got {name_match.group(1) if name_match else None}"
+          assert code_match and code_match.group(1) == "2002001", f"versionCode default must be 2002001, got {code_match.group(1) if code_match else None}"
+          assert name_match and name_match.group(1) == "2.2", f"versionName default must be '2.2', got {name_match.group(1) if name_match else None}"
           github_ref = os.environ.get("GITHUB_REF", "")
           if github_ref.startswith("refs/tags/v"):
               tag_ver = github_ref[len("refs/tags/v"):]
@@ -285,7 +285,7 @@ jobs:
           assert ".archiveprovider" in fp, "FileProvider missing .archiveprovider authority"
           assert re.search(r"android:exported(?:\(0x[0-9a-f]+\))?=(?:false|\(type 0x12\)0x0)\b", fp), f"FileProvider must have exported=false:\n{fp}"
 
-          print("Verified v2.1 integration invariants")
+          print("Verified v2.2 integration invariants")
           PY
       - name: Upload PR debug APK artifact
         if: github.event_name == 'pull_request'

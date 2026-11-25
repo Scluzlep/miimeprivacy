@@ -334,4 +334,61 @@ class RealApkDexSimulationHarnessTest {
             }
         }
     }
+
+    @Test
+    fun dexKitArrayParameterMatcherRejectsJvmDescriptorAndMatchesJavaArrayTypeName() {
+        val baiduSession = RealApkDexSimulationHarness.openSimulation(
+            target = ImeTarget.BAIDU,
+            resolveMode = SymbolResolveMode.DYNAMIC
+        )
+        for (methodName in listOf("obUploadDataRequest", "uploadDataRequest")) {
+            val jvmDescriptorMatches = baiduSession.dexKitExecutor.findMethod(
+                FindMethod.create()
+                    .searchPackages("com.baidu.ubc")
+                    .matcher(
+                        MethodMatcher.create()
+                            .declaredClass("com.baidu.ubc.BehaviorUploader", StringMatchType.Equals)
+                            .name(methodName, StringMatchType.Equals)
+                            .paramTypes("java.lang.String", "[B", "java.util.Map")
+                    )
+            )
+            assertTrue(
+                "DexKit matcher must reject JVM array descriptor '[B' for $methodName",
+                jvmDescriptorMatches.isEmpty()
+            )
+
+            val javaTypeNameMatches = baiduSession.dexKitExecutor.findMethod(
+                FindMethod.create()
+                    .searchPackages("com.baidu.ubc")
+                    .matcher(
+                        MethodMatcher.create()
+                            .declaredClass("com.baidu.ubc.BehaviorUploader", StringMatchType.Equals)
+                            .name(methodName, StringMatchType.Equals)
+                            .paramTypes("java.lang.String", "byte[]", "java.util.Map")
+                    )
+            )
+            assertEquals(
+                "DexKit matcher with 'byte[]' must match 1 method for $methodName",
+                1,
+                javaTypeNameMatches.size
+            )
+
+            val classArrayMatches = baiduSession.dexKitExecutor.findMethod(
+                FindMethod.create()
+                    .searchPackages("com.baidu.ubc")
+                    .matcher(
+                        MethodMatcher.create()
+                            .declaredClass("com.baidu.ubc.BehaviorUploader", StringMatchType.Equals)
+                            .name(methodName, StringMatchType.Equals)
+                            .paramTypes(String::class.java, ByteArray::class.java, Map::class.java)
+                    )
+            )
+            assertEquals(
+                "DexKit matcher with Class<*> vararg (ByteArray::class.java) must match 1 method for $methodName",
+                1,
+                classArrayMatches.size
+            )
+            assertEquals(javaTypeNameMatches.single().descriptor, classArrayMatches.single().descriptor)
+        }
+    }
 }

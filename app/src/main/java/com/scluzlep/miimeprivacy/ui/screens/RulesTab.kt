@@ -374,7 +374,8 @@ private fun ImeGroupHeaderCard(
                 ) {
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        itemVerticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
                             text = target.displayName,
@@ -520,7 +521,8 @@ private fun CategorySectionHeader(
                     .weight(1f)
                     .padding(end = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                itemVerticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = ruleCategoryLabel(category),
@@ -666,7 +668,8 @@ private fun GranularRuleCard(
 
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                itemVerticalAlignment = Alignment.CenterVertically
             ) {
                 MiStatusBadge(
                     text = badgeLabel,
