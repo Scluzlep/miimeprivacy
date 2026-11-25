@@ -254,6 +254,11 @@ class RealApkDexSimulationHarnessTest {
                         "${target.name} [DYNAMIC] should resolve rules via DEXKIT",
                         result.reports.any { it.source.contains("DEXKIT") }
                     )
+                    assertTrue(
+                        "${target.name} [DYNAMIC] should record resolutionTraces without FAST_PATH",
+                        session.resolutionTraces.isNotEmpty() &&
+                            session.resolutionTraces.none { it.source == ResolveSource.FAST_PATH }
+                    )
                 }
             }
         }

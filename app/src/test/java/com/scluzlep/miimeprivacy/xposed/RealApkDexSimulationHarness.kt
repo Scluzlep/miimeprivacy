@@ -43,6 +43,7 @@ import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.ZipFile
 
@@ -101,6 +102,7 @@ object RealApkDexSimulationHarness {
         )
         ConfigBridge.detach()
         ConfigBridge.attachRemote(xposed)
+        val resolutionTraces = Collections.synchronizedList(mutableListOf<SymbolResolutionTrace>())
         val registry = HookRegistry(
             xposed = xposed,
             target = target,
@@ -110,7 +112,8 @@ object RealApkDexSimulationHarness {
             processName = target.packageName,
             oldById = null,
             dexKitExecutorOverride = executor,
-            symbolPrefsOverride = prefs
+            symbolPrefsOverride = prefs,
+            onResolveTrace = { trace -> resolutionTraces.add(trace) }
         )
         return SimulationSession(
             target = target,
@@ -121,7 +124,8 @@ object RealApkDexSimulationHarness {
             appInfo = appInfo,
             xposed = xposed,
             registry = registry,
-            prefs = prefs
+            prefs = prefs,
+            resolutionTraces = resolutionTraces
         )
     }
 
@@ -134,7 +138,8 @@ object RealApkDexSimulationHarness {
         val appInfo: ApplicationInfo,
         val xposed: RecordingXposedInterface,
         val registry: HookRegistry,
-        val prefs: SharedPreferences
+        val prefs: SharedPreferences,
+        val resolutionTraces: MutableList<SymbolResolutionTrace>
     ) {
         fun installPack(pack: ImeHookPack): ImePackInstallResult =
             pack.install(

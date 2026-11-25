@@ -37,6 +37,13 @@ data class ResolveResult<T>(
     val isSuccess: Boolean get() = value != null
 }
 
+data class SymbolResolutionTrace(
+    val kind: String,
+    val cacheKey: String,
+    val source: ResolveSource,
+    val descriptor: String
+)
+
 data class DexTypeDescriptor(
     val name: String,
     val descriptor: String = ""
@@ -158,7 +165,8 @@ class SymbolResolver(
     val resolveMode: SymbolResolveMode = SymbolResolveMode.AUTO,
     val requiredCacheResetAtMs: Long = 0L,
     internal val prefsOverride: SharedPreferences? = null,
-    internal val dexKitExecutorOverride: DexKitExecutor? = null
+    internal val dexKitExecutorOverride: DexKitExecutor? = null,
+    internal val onResolveTrace: ((SymbolResolutionTrace) -> Unit)? = null
 ) : AutoCloseable {
 
     private val prefs: SharedPreferences? = prefsOverride ?: context?.let { ctx ->
@@ -180,6 +188,8 @@ class SymbolResolver(
     private var bridgeInitAttempted: Boolean = false
 
     private fun <T> runResolutionOrder(
+        kind: String,
+        cacheKey: String,
         preferDynamic: Boolean,
         tryFastPath: () -> ResolveResult<T>?,
         tryCache: () -> ResolveResult<T>?,
@@ -191,10 +201,24 @@ class SymbolResolver(
         } else {
             listOf(tryFastPath, tryCache, tryDexKit, tryStructural)
         }
+        var result: ResolveResult<T>? = null
         for (attempt in attempts) {
-            attempt()?.let { return it }
+            val candidate = attempt()
+            if (candidate != null) {
+                result = candidate
+                break
+            }
         }
-        return ResolveResult(null, ResolveSource.MISS)
+        val finalResult: ResolveResult<T> = result ?: ResolveResult(null, ResolveSource.MISS)
+        onResolveTrace?.invoke(
+            SymbolResolutionTrace(
+                kind = kind,
+                cacheKey = cacheKey,
+                source = finalResult.source,
+                descriptor = finalResult.descriptor
+            )
+        )
+        return finalResult
     }
 
     fun resolveClass(
@@ -206,6 +230,8 @@ class SymbolResolver(
         val storageKey = buildCacheKey(versionCode, cacheKey)
         val preferDynamic = resolveMode == SymbolResolveMode.DYNAMIC
         return runResolutionOrder(
+            kind = "class",
+            cacheKey = cacheKey,
             preferDynamic = preferDynamic,
             tryFastPath = {
                 var fastResult: ResolveResult<Class<*>>? = null
@@ -296,6 +322,8 @@ class SymbolResolver(
         val storageKey = buildCacheKey(versionCode, cacheKey)
         val preferDynamic = resolveMode == SymbolResolveMode.DYNAMIC
         return runResolutionOrder(
+            kind = "executable",
+            cacheKey = cacheKey,
             preferDynamic = preferDynamic,
             tryFastPath = {
                 if (fastPath == null) {
@@ -364,6 +392,8 @@ class SymbolResolver(
         val storageKey = buildCacheKey(versionCode, cacheKey)
         val preferDynamic = resolveMode == SymbolResolveMode.DYNAMIC
         return runResolutionOrder(
+            kind = "field",
+            cacheKey = cacheKey,
             preferDynamic = preferDynamic,
             tryFastPath = {
                 if (fastPath == null) {

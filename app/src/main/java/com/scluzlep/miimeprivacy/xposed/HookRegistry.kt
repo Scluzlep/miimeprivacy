@@ -28,7 +28,8 @@ class HookRegistry(
     val processName: String,
     private val oldById: MutableMap<String, XposedInterface.HookHandle>? = null,
     internal val dexKitExecutorOverride: DexKitExecutor? = null,
-    internal val symbolPrefsOverride: SharedPreferences? = null
+    internal val symbolPrefsOverride: SharedPreferences? = null,
+    internal val onResolveTrace: ((SymbolResolutionTrace) -> Unit)? = null
 ) {
     private val activeHandles = linkedMapOf<String, XposedInterface.HookHandle>()
     private val ruleReports = ConcurrentHashMap<String, HookRuleReport>()
@@ -428,7 +429,8 @@ class HookRegistry(
             resolveMode = cfg.resolveModeFor(target),
             requiredCacheResetAtMs = cfg.cacheResetAtMsFor(target),
             prefsOverride = symbolPrefsOverride,
-            dexKitExecutorOverride = dexKitExecutorOverride
+            dexKitExecutorOverride = dexKitExecutorOverride,
+            onResolveTrace = onResolveTrace
         )
     }
 
@@ -444,7 +446,8 @@ class HookRegistry(
             resolveMode = cfg.resolveModeFor(target),
             requiredCacheResetAtMs = cfg.cacheResetAtMsFor(target),
             prefsOverride = symbolPrefsOverride,
-            dexKitExecutorOverride = dexKitExecutorOverride
+            dexKitExecutorOverride = dexKitExecutorOverride,
+            onResolveTrace = onResolveTrace
         )
     }
 

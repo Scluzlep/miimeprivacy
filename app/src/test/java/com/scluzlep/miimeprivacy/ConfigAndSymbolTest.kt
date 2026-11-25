@@ -20,6 +20,7 @@ import com.scluzlep.miimeprivacy.xposed.DexDescriptorResult
 import com.scluzlep.miimeprivacy.xposed.DexKitExecutor
 import com.scluzlep.miimeprivacy.xposed.HookRegistry
 import com.scluzlep.miimeprivacy.xposed.ResolveSource
+import com.scluzlep.miimeprivacy.xposed.SymbolResolutionTrace
 import com.scluzlep.miimeprivacy.xposed.SymbolResolver
 import org.luckypray.dexkit.query.FindClass
 import org.luckypray.dexkit.query.FindField
@@ -516,6 +517,7 @@ class ConfigAndSymbolTest {
                 )
         }
 
+        val traces = mutableListOf<SymbolResolutionTrace>()
         val dynamicResolver = SymbolResolver(
             context = null,
             classLoader = loader,
@@ -525,7 +527,8 @@ class ConfigAndSymbolTest {
             resolveMode = SymbolResolveMode.DYNAMIC,
             requiredCacheResetAtMs = 5000L,
             prefsOverride = prefs,
-            dexKitExecutorOverride = fakeExecutor
+            dexKitExecutorOverride = fakeExecutor,
+            onResolveTrace = { traces.add(it) }
         )
         dynamicResolver.use { resolver ->
             // FastPath-only targets MUST return MISS in DYNAMIC mode (never FAST_PATH)
@@ -593,6 +596,9 @@ class ConfigAndSymbolTest {
             )
             assertEquals(ResolveSource.CACHE, cachedCls.source)
             assertEquals(ResolveSource.CACHE, cachedMethod.source)
+            assertTrue(traces.any { it.kind == "class" && it.cacheKey == "sample.dexkit_cls" && it.source == ResolveSource.DEXKIT })
+            assertTrue(traces.any { it.kind == "executable" && it.cacheKey == "sample.dexkit_hello" && it.source == ResolveSource.DEXKIT })
+            assertTrue(traces.any { it.kind == "field" && it.cacheKey == "sample.fast_only_field" && it.source == ResolveSource.MISS })
 
             // No-op when same resetAtMs already applied
             assertFalse(SymbolResolver.applyPendingResetIfNeeded(prefs, 5000L))
