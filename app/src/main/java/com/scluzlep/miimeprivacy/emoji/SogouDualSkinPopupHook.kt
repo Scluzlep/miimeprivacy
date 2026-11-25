@@ -5,9 +5,15 @@ import android.view.MotionEvent
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
+import com.scluzlep.miimeprivacy.model.HookMatchStatus
+import com.scluzlep.miimeprivacy.model.HookRuleCatalog
 import com.scluzlep.miimeprivacy.xposed.HookRegistry
+import com.scluzlep.miimeprivacy.xposed.ResolveSource
 import com.scluzlep.miimeprivacy.xposed.SymbolResolver
+import com.scluzlep.miimeprivacy.xposed.findClass
+import com.scluzlep.miimeprivacy.xposed.findMethod
 import io.github.libxposed.api.XposedInterface
+import org.luckypray.dexkit.query.enums.StringMatchType
 import java.lang.reflect.Field
 import java.lang.reflect.Method
 import java.util.Collections
@@ -32,98 +38,179 @@ internal object SogouDualSkinPopupHook {
     fun install(
         registry: HookRegistry,
         classLoader: ClassLoader,
+        resolver: SymbolResolver,
+        ruleId: String = HookRuleCatalog.RULE_SOGOU_UI_DUAL_SKIN_EMOJI,
     ) {
-        val popupClass = SymbolResolver.loadClassOrNull(POPUP_CLASS, classLoader)
-        val infoClass = SymbolResolver.loadClassOrNull(INFO_CLASS, classLoader)
+        val popupClassRes = resolver.resolveClass(
+            cacheKey = "sogou.emoji.MoreColorEmojiPopupView",
+            fastPathCandidates = listOf(POPUP_CLASS),
+            dexKitFinder = { dk ->
+                dk.findClass {
+                    searchPackages("com.sogou.expressionplugin.ui")
+                    matcher {
+                        usingStrings(listOf("MoreColorEmojiPopupView", "_1F3FB"), StringMatchType.Equals)
+                    }
+                }.singleOrNull()?.descriptor
+            }
+        )
+        val infoClassRes = resolver.resolveClass(
+            cacheKey = "sogou.emoji.BaseExpressionInfo",
+            fastPathCandidates = listOf(INFO_CLASS),
+            dexKitFinder = { dk ->
+                dk.findClass {
+                    searchPackages("com.sogou.sogou_router_base.base_bean")
+                    matcher {
+                        addMethod { name("canShowGroupEmojiAnnotation", StringMatchType.Equals) }
+                        addMethod { name("isWeiXinCandidate", StringMatchType.Equals) }
+                    }
+                }.singleOrNull()?.descriptor
+            }
+        )
+        val popupClass = popupClassRes.value
+        val infoClass = infoClassRes.value
         if (popupClass == null || infoClass == null) {
             registry.logInfo("SogouDualSkinPopupHook: popup/info classes not present, skipped")
+            registry.reportRule(
+                ruleId = ruleId,
+                status = HookMatchStatus.FAILED,
+                source = ResolveSource.MISS.name,
+                detail = "miss:dual_skin_classes"
+            )
             return
         }
 
-        val setEmojiDrawable = SymbolResolver.findDeclaredMethodOrNull(
-            popupClass,
-            "setEmojiDrawable",
-            infoClass,
-            Rect::class.java,
-            Rect::class.java,
-        )
-        val commitEmoji = SymbolResolver.findDeclaredMethodOrNull(
-            popupClass,
-            "dealMoreColorCommitEmoji",
-            Int::class.javaPrimitiveType!!,
-        )
-        val changeCurrentIndex = SymbolResolver.findDeclaredMethodOrNull(
-            popupClass,
-            "changeCurrentIndex",
-            MotionEvent::class.java,
-        )
-        if (setEmojiDrawable == null || commitEmoji == null || changeCurrentIndex == null) {
-            registry.logWarn("SogouDualSkinPopupHook: required popup methods missing")
-            return
-        }
-
-        runCatching {
-            registry.installOrReplaceHook(
-                hookId = "emoji:sogou_dual_skin#setEmojiDrawable",
-                executable = setEmojiDrawable,
-                priority = XposedInterface.PRIORITY_DEFAULT,
-            ) { chain ->
-                val popup = chain.thisObject ?: return@installOrReplaceHook chain.proceed()
-                markedPopups.remove(popup)
-                restoreReusedViews(popup)
-
-                val result = chain.proceed()
-                val info = chain.getArg(0) ?: return@installOrReplaceHook result
-                if (!isDualSkinParent(info)) return@installOrReplaceHook result
-
-                val rootBounds = chain.getArg(1) as? Rect ?: return@installOrReplaceHook result
-                val emojiBounds = chain.getArg(2) as? Rect ?: return@installOrReplaceHook result
-                markedPopups[popup] = true
-                runCatching {
-                    collapseToFiveTones(popup, info, rootBounds, emojiBounds)
-                }.onFailure { err ->
-                    registry.logWarn("SogouDualSkinPopupHook collapse failed", err)
-                }
-                result
-            }
-
-            registry.installOrReplaceHook(
-                hookId = "emoji:sogou_dual_skin#commitEmoji",
-                executable = commitEmoji,
-                priority = XposedInterface.PRIORITY_DEFAULT,
-            ) { chain ->
-                val popup = chain.thisObject ?: return@installOrReplaceHook chain.proceed()
-                if (isMarked(popup) && chain.getArg(0) == NEUTRAL_INDEX) {
-                    chain.proceed(arrayOf(visibleActualIndices.first()))
-                } else {
-                    chain.proceed()
-                }
-            }
-
-            registry.installOrReplaceHook(
-                hookId = "emoji:sogou_dual_skin#changeCurrentIndex",
-                executable = changeCurrentIndex,
-                priority = XposedInterface.PRIORITY_DEFAULT,
-            ) { chain ->
-                val popup = chain.thisObject ?: return@installOrReplaceHook chain.proceed()
-                val event = chain.getArg(0) as? MotionEvent
-                    ?: return@installOrReplaceHook chain.proceed()
-                if (!isMarked(popup)) return@installOrReplaceHook chain.proceed()
-
-                runCatching {
-                    handleFiveToneMotion(popup, event, commitEmoji)
-                }.fold(
-                    onSuccess = { true },
-                    onFailure = { error ->
-                        registry.logWarn("SogouDualSkinPopupHook drag failed", error)
-                        chain.proceed()
-                    },
+        val popupPkg = popupClass.name.substringBeforeLast('.', "")
+        val setEmojiDrawableRes = resolver.resolveMethod(
+            cacheKey = "sogou.emoji.MoreColorEmojiPopupView#setEmojiDrawable",
+            fastPath = {
+                SymbolResolver.findDeclaredMethodOrNull(
+                    popupClass,
+                    "setEmojiDrawable",
+                    infoClass,
+                    Rect::class.java,
+                    Rect::class.java,
                 )
+            },
+            dexKitFinder = { dk ->
+                dk.findMethod {
+                    searchPackages(popupPkg)
+                    matcher {
+                        declaredClass(popupClass.name, StringMatchType.Equals)
+                        name("setEmojiDrawable", StringMatchType.Equals)
+                        paramTypes(infoClass.name, Rect::class.java.name, Rect::class.java.name)
+                        returnType("void")
+                    }
+                }.singleOrNull()?.descriptor
             }
-            registry.logInfo("SogouDualSkinPopupHook: installed 5x5 popup hooks")
-        }.onFailure { err ->
-            registry.logWarn("SogouDualSkinPopupHook: failed to install hooks", err)
+        )
+        val commitEmojiRes = resolver.resolveMethod(
+            cacheKey = "sogou.emoji.MoreColorEmojiPopupView#dealMoreColorCommitEmoji",
+            fastPath = {
+                SymbolResolver.findDeclaredMethodOrNull(
+                    popupClass,
+                    "dealMoreColorCommitEmoji",
+                    Int::class.javaPrimitiveType!!,
+                )
+            },
+            dexKitFinder = { dk ->
+                dk.findMethod {
+                    searchPackages(popupPkg)
+                    matcher {
+                        declaredClass(popupClass.name, StringMatchType.Equals)
+                        name("dealMoreColorCommitEmoji", StringMatchType.Equals)
+                        paramTypes("int")
+                        returnType("void")
+                    }
+                }.singleOrNull()?.descriptor
+            }
+        )
+        val changeCurrentIndexRes = resolver.resolveMethod(
+            cacheKey = "sogou.emoji.MoreColorEmojiPopupView#changeCurrentIndex",
+            fastPath = {
+                SymbolResolver.findDeclaredMethodOrNull(
+                    popupClass,
+                    "changeCurrentIndex",
+                    MotionEvent::class.java,
+                )
+            },
+            dexKitFinder = { dk ->
+                dk.findMethod {
+                    searchPackages(popupPkg)
+                    matcher {
+                        declaredClass(popupClass.name, StringMatchType.Equals)
+                        name("changeCurrentIndex", StringMatchType.Equals)
+                        paramTypes(MotionEvent::class.java.name)
+                        returnType("boolean")
+                    }
+                }.singleOrNull()?.descriptor
+            }
+        )
+        val commitEmoji = commitEmojiRes.value
+
+        registry.hookExecutable(
+            ruleId = ruleId,
+            hookId = "emoji:sogou_dual_skin#setEmojiDrawable",
+            resolveResult = setEmojiDrawableRes,
+            priority = XposedInterface.PRIORITY_DEFAULT,
+            onFailureStatus = HookMatchStatus.FAILED,
+        ) { chain ->
+            val popup = chain.thisObject ?: return@hookExecutable chain.proceed()
+            markedPopups.remove(popup)
+            restoreReusedViews(popup)
+
+            val result = chain.proceed()
+            val info = chain.getArg(0) ?: return@hookExecutable result
+            if (!isDualSkinParent(info)) return@hookExecutable result
+
+            val rootBounds = chain.getArg(1) as? Rect ?: return@hookExecutable result
+            val emojiBounds = chain.getArg(2) as? Rect ?: return@hookExecutable result
+            markedPopups[popup] = true
+            runCatching {
+                collapseToFiveTones(popup, info, rootBounds, emojiBounds)
+            }.onFailure { err ->
+                registry.logWarn("SogouDualSkinPopupHook collapse failed", err)
+            }
+            result
         }
+
+        registry.hookExecutable(
+            ruleId = ruleId,
+            hookId = "emoji:sogou_dual_skin#commitEmoji",
+            resolveResult = commitEmojiRes,
+            priority = XposedInterface.PRIORITY_DEFAULT,
+            onFailureStatus = HookMatchStatus.FAILED,
+        ) { chain ->
+            val popup = chain.thisObject ?: return@hookExecutable chain.proceed()
+            if (isMarked(popup) && chain.getArg(0) == NEUTRAL_INDEX) {
+                chain.proceed(arrayOf(visibleActualIndices.first()))
+            } else {
+                chain.proceed()
+            }
+        }
+
+        registry.hookExecutable(
+            ruleId = ruleId,
+            hookId = "emoji:sogou_dual_skin#changeCurrentIndex",
+            resolveResult = changeCurrentIndexRes,
+            priority = XposedInterface.PRIORITY_DEFAULT,
+            onFailureStatus = HookMatchStatus.FAILED,
+        ) { chain ->
+            val popup = chain.thisObject ?: return@hookExecutable chain.proceed()
+            val event = chain.getArg(0) as? MotionEvent
+                ?: return@hookExecutable chain.proceed()
+            if (!isMarked(popup) || commitEmoji == null) return@hookExecutable chain.proceed()
+
+            runCatching {
+                handleFiveToneMotion(popup, event, commitEmoji)
+            }.fold(
+                onSuccess = { true },
+                onFailure = { error ->
+                    registry.logWarn("SogouDualSkinPopupHook drag failed", error)
+                    chain.proceed()
+                },
+            )
+        }
+        registry.logInfo("SogouDualSkinPopupHook: installed 5x5 popup hooks")
     }
 
     private fun isDualSkinParent(info: Any): Boolean {
