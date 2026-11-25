@@ -70,10 +70,10 @@ class PrivacyUiStateTest {
     }
 
     @Test
-    fun healthSummaryReportsHealthy8Of8WhenStrictHttpDnsSkipped() {
+    fun healthSummaryReportsHealthyWhenStrictHttpDnsSkipped() {
         val sogouRules = HookRuleCatalog.rulesFor(ImeTarget.SOGOU)
         val reports = sogouRules.map { spec ->
-            if (spec.ruleId == HookRuleCatalog.RULE_SOGOU_HTTPDNS) {
+            if (spec.ruleId == HookRuleCatalog.RULE_SOGOU_NET_HTTPDNS) {
                 HookRuleReport(ruleId = spec.ruleId, status = HookMatchStatus.SKIPPED)
             } else {
                 HookRuleReport(
@@ -107,19 +107,19 @@ class PrivacyUiStateTest {
         )
 
         assertEquals(RuleHealthSeverity.HEALTHY, summary.severity)
-        assertEquals(8, summary.activeCount)
-        assertEquals(8, summary.applicableCount)
+        assertEquals(29, summary.activeCount)
+        assertEquals(29, summary.applicableCount)
         assertEquals(1, summary.skippedCount)
-        assertEquals(16L, summary.blockedCount)
+        assertEquals(58L, summary.blockedCount)
         assertFalse(summary.versionMismatch)
-        assertTrue(summary.headline.startsWith("8/8 正常"))
+        assertTrue(summary.headline.startsWith("29/29 正常"))
     }
 
     @Test
     fun healthSummaryFlagsCriticalFailureAndFallbackHonesty() {
         val xiaoaiRules = HookRuleCatalog.rulesFor(ImeTarget.XIAOAI)
         val criticalFailReports = xiaoaiRules.map { spec ->
-            if (spec.ruleId == HookRuleCatalog.RULE_XIAOAI_ONETRACK) {
+            if (spec.ruleId == HookRuleCatalog.RULE_XIAOAI_TELEMETRY_ONETRACK) {
                 HookRuleReport(
                     ruleId = spec.ruleId,
                     status = HookMatchStatus.FAILED,
@@ -147,10 +147,10 @@ class PrivacyUiStateTest {
         assertEquals(1, criticalSummary.criticalFailedCount)
         assertTrue(criticalSummary.versionMismatch)
         assertTrue(criticalSummary.headline.contains("关键规则未命中"))
-        assertEquals("1 项关键规则未命中 · 5/6 正常", criticalSummary.headline)
+        assertEquals("1 项关键规则未命中 · 19/20 正常", criticalSummary.headline)
 
         val fallbackReports = xiaoaiRules.map { spec ->
-            if (spec.ruleId == HookRuleCatalog.RULE_XIAOAI_CLIPBOARD) {
+            if (spec.ruleId == HookRuleCatalog.RULE_XIAOAI_CLIP_BACKGROUND_GUARD) {
                 HookRuleReport(
                     ruleId = spec.ruleId,
                     status = HookMatchStatus.FALLBACK,
@@ -176,7 +176,7 @@ class PrivacyUiStateTest {
     @Test
     fun hookRuleCatalogCopyIsConciseAndFreeOfParentheses() {
         val rules = HookRuleCatalog.allRules()
-        assertEquals(23, rules.size)
+        assertEquals(74, rules.size)
         for (spec in rules) {
             assertTrue("Title too long (${spec.ruleId}): ${spec.title}", spec.title.length <= 12)
             assertTrue("Description too long (${spec.ruleId}): ${spec.description}", spec.description.length <= 24)
@@ -208,13 +208,13 @@ class PrivacyUiStateTest {
             ImeTarget.SOGOU to ImeRuntimeDiagnostics(
                 target = ImeTarget.SOGOU,
                 rules = listOf(
-                    HookRuleReport(HookRuleCatalog.RULE_SOGOU_CLOUD_SANITIZE, HookMatchStatus.ACTIVE, blockedCount = 10L)
+                    HookRuleReport(HookRuleCatalog.RULE_SOGOU_CLOUD_PAYLOAD_DEVICE_DIALOGUE, HookMatchStatus.ACTIVE, blockedCount = 10L)
                 )
             ),
             ImeTarget.BAIDU to ImeRuntimeDiagnostics(
                 target = ImeTarget.BAIDU,
                 rules = listOf(
-                    HookRuleReport(HookRuleCatalog.RULE_BAIDU_TELEMETRY, HookMatchStatus.ACTIVE, blockedCount = 5L)
+                    HookRuleReport(HookRuleCatalog.RULE_BAIDU_TELEMETRY_REALTIME_STATS, HookMatchStatus.ACTIVE, blockedCount = 5L)
                 )
             )
         )
@@ -248,12 +248,12 @@ class PrivacyUiStateTest {
         assertEquals(PillVisualState.LOCAL_MANAGED, baiduCard.pillState)
         assertEquals(PillVisualState.UNMANAGED_OR_ALERT, xiaoaiCard.pillState)
 
-        val sogouHttpDns = state.ruleItems.first { it.spec.ruleId == HookRuleCatalog.RULE_SOGOU_HTTPDNS }
+        val sogouHttpDns = state.ruleItems.first { it.spec.ruleId == HookRuleCatalog.RULE_SOGOU_NET_HTTPDNS }
         assertFalse(sogouHttpDns.switchEnabled)
         assertEquals(HookMatchStatus.SKIPPED, sogouHttpDns.effectiveStatus)
 
-        val xiaoaiHotword = state.ruleItems.first { it.spec.ruleId == HookRuleCatalog.RULE_XIAOAI_HOTWORD_TRACKER }
-        // xiaoaiManaged is false, so switchEnabled is false even though blockXiaoAiHotwordTracker is true
+        val xiaoaiHotword = state.ruleItems.first { it.spec.ruleId == HookRuleCatalog.RULE_XIAOAI_CONTEXT_HOTWORD_AICR }
+        // xiaoaiManaged is false, so switchEnabled is false
         assertFalse(xiaoaiHotword.switchEnabled)
 
         assertEquals(
@@ -271,7 +271,7 @@ class PrivacyUiStateTest {
             resolveMode = "AUTO",
             cachedSymbolCount = 0,
             rules = listOf(
-                HookRuleReport(HookRuleCatalog.RULE_XIAOAI_ONETRACK, HookMatchStatus.ACTIVE, source = "FAST_PATH"),
+                HookRuleReport(HookRuleCatalog.RULE_XIAOAI_TELEMETRY_ONETRACK, HookMatchStatus.ACTIVE, source = "FAST_PATH"),
                 HookRuleReport(HookRuleCatalog.RULE_XIAOAI_OVERLAY_PILL, HookMatchStatus.ACTIVE, source = "FAST_PATH")
             )
         )
@@ -299,7 +299,7 @@ class PrivacyUiStateTest {
             resolveMode = "DYNAMIC",
             cachedSymbolCount = 28,
             rules = listOf(
-                HookRuleReport(HookRuleCatalog.RULE_BAIDU_TELEMETRY, HookMatchStatus.ACTIVE, source = "DEXKIT"),
+                HookRuleReport(HookRuleCatalog.RULE_BAIDU_TELEMETRY_REALTIME_STATS, HookMatchStatus.ACTIVE, source = "DEXKIT"),
                 HookRuleReport(HookRuleCatalog.RULE_BAIDU_OVERLAY_PILL, HookMatchStatus.ACTIVE, source = "FAST_PATH")
             )
         )
@@ -321,7 +321,7 @@ class PrivacyUiStateTest {
                 resolveMode = "DYNAMIC",
                 cachedSymbolCount = 28,
                 rules = listOf(
-                    HookRuleReport(HookRuleCatalog.RULE_SOGOU_PRIVACY_GATE, HookMatchStatus.ACTIVE, source = "CACHE")
+                    HookRuleReport(HookRuleCatalog.RULE_SOGOU_GATE_ALIVE_HEARTBEAT, HookMatchStatus.ACTIVE, source = "CACHE")
                 )
             )
         )

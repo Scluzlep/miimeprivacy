@@ -192,11 +192,11 @@ class BaiduHookPackTest {
     }
 
     @Test
-    fun hookRuleCatalog_coversAllSevenNonOverlayBaiduRulesAndRespectsConfigBridgeDefaults() {
+    fun hookRuleCatalog_coversAllNonOverlayBaiduRulesAndRespectsConfigBridgeDefaults() {
         val nonOverlayRules = HookRuleCatalog.rulesFor(ImeTarget.BAIDU)
             .filterNot { it.ruleId == HookRuleCatalog.RULE_BAIDU_OVERLAY_PILL }
         assertEquals(ImeTarget.BAIDU, BaiduHookPack.target)
-        assertEquals(7, nonOverlayRules.size)
+        assertEquals(23, nonOverlayRules.size)
 
         // Default ConfigBridge leaves optional strict HTTPDNS disabled while enabling default privacy gates.
         assertFalse(ConfigBridge.isRuleEnabled(ImeTarget.BAIDU) { it.blockHttpDns })

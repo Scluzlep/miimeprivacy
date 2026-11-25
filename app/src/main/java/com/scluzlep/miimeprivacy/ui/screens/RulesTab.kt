@@ -2,7 +2,10 @@ package com.scluzlep.miimeprivacy.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,28 +14,48 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.scluzlep.miimeprivacy.model.HookMatchStatus
+import com.scluzlep.miimeprivacy.model.ImeTarget
+import com.scluzlep.miimeprivacy.model.RuleCategory
 import com.scluzlep.miimeprivacy.ui.theme.MiInnerShape
 import com.scluzlep.miimeprivacy.ui.theme.MiThemeExtras
+import com.scluzlep.miimeprivacy.ui.viewmodel.ImeCardUiModel
 import com.scluzlep.miimeprivacy.ui.viewmodel.PrivacyUiController
 import com.scluzlep.miimeprivacy.ui.viewmodel.PrivacyUiState
+import com.scluzlep.miimeprivacy.ui.viewmodel.PrivacyUiStateBuilder
 import com.scluzlep.miimeprivacy.ui.viewmodel.RuleDisplayItem
+import com.scluzlep.miimeprivacy.ui.viewmodel.RuleHealthSeverity
 import com.scluzlep.miimeprivacy.ui.viewmodel.RuleTargetFilter
+import com.scluzlep.miimeprivacy.ui.viewmodel.TargetRuleOverview
 import com.scluzlep.miimeprivacy.ui.viewmodel.formatSourceTokenLabel
 import com.scluzlep.miimeprivacy.ui.viewmodel.parseSourceTokens
+import com.scluzlep.miimeprivacy.ui.viewmodel.pickPrimarySourceToken
+import com.scluzlep.miimeprivacy.ui.viewmodel.ruleCategoryLabel
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
+import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
-import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Surface
+import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 @Composable
@@ -43,11 +66,64 @@ fun RulesTab(
     contentPadding: PaddingValues,
     controller: PrivacyUiController
 ) {
-    val cfg = state.config
-    val filteredRules = if (selectedFilter.target == null) {
-        state.ruleItems
-    } else {
-        state.ruleItems.filter { it.spec.target == selectedFilter.target }
+    val colors = MiuixTheme.colorScheme
+
+    var keyword by remember { mutableStateOf("") }
+    // All 3 IME groups and all (ImeTarget, RuleCategory) groups start collapsed by default.
+    val expandedTargets = remember { mutableStateMapOf<ImeTarget, Boolean>() }
+    val expandedCategories = remember { mutableStateMapOf<String, Boolean>() }
+
+    LaunchedEffect(selectedFilter) {
+        val diagnosticTarget = selectedFilter.target ?: return@LaunchedEffect
+        expandedTargets.clear()
+        expandedCategories.clear()
+        expandedTargets[diagnosticTarget] = true
+        val targetItems = state.ruleItems.filter { it.spec.target == diagnosticTarget }
+        for (category in RuleCategory.entries) {
+            val hasIssue = targetItems.any {
+                it.spec.category == category &&
+                    (it.effectiveStatus == HookMatchStatus.FAILED || it.effectiveStatus == HookMatchStatus.DEGRADED)
+            }
+            if (hasIssue) {
+                expandedCategories[categoryExpandKey(diagnosticTarget, category)] = true
+            }
+        }
+    }
+
+    val trimmedQuery = keyword.trim().lowercase()
+
+    val targetSections = ImeTarget.entries.mapNotNull { target ->
+        val allTargetRules = state.ruleItems.filter { it.spec.target == target }
+        val filteredTargetRules = if (trimmedQuery.isEmpty()) {
+            allTargetRules
+        } else {
+            val imeNameMatched = target.displayName.lowercase().contains(trimmedQuery) ||
+                shortImeName(target).lowercase().contains(trimmedQuery) ||
+                target.packageName.lowercase().contains(trimmedQuery)
+            if (imeNameMatched) {
+                allTargetRules
+            } else {
+                allTargetRules.filter { item ->
+                    item.spec.title.lowercase().contains(trimmedQuery) ||
+                        item.spec.description.lowercase().contains(trimmedQuery) ||
+                        item.spec.ruleId.lowercase().contains(trimmedQuery) ||
+                        ruleCategoryLabel(item.spec.category).lowercase().contains(trimmedQuery)
+                }
+            }
+        }
+        val categories = RuleCategory.entries.mapNotNull { category ->
+            val itemsInCat = filteredTargetRules.filter { it.spec.category == category }
+            if (itemsInCat.isEmpty()) null else category to itemsInCat
+        }
+        if (categories.isEmpty()) {
+            null
+        } else {
+            Triple(
+                target,
+                PrivacyUiStateBuilder.summarizeTargetRules(state, target),
+                categories
+            )
+        }
     }
 
     LazyColumn(
@@ -60,175 +136,457 @@ fun RulesTab(
             top = contentPadding.calculateTopPadding() + 8.dp,
             bottom = contentPadding.calculateBottomPadding() + 20.dp
         ),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        item(key = "telemetry_title") {
-            SmallTitle(
-                text = "遥测与日志",
-                insideMargin = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
-            )
-        }
+        item(key = "rule_search_and_collapse") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    modifier = Modifier.weight(1f),
+                    shape = MiInnerShape,
+                    color = colors.surfaceContainer,
+                    border = BorderStroke(0.5.dp, colors.dividerLine)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(modifier = Modifier.weight(1f)) {
+                            if (keyword.isEmpty()) {
+                                Text(
+                                    text = "搜索输入法、分类、Hook 名称或 ID…",
+                                    style = MiuixTheme.textStyles.body2,
+                                    color = colors.onSurfaceVariantSummary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            BasicTextField(
+                                value = keyword,
+                                onValueChange = { keyword = it },
+                                singleLine = true,
+                                textStyle = MiuixTheme.textStyles.body2.copy(
+                                    color = colors.onSurfaceContainer
+                                ),
+                                cursorBrush = SolidColor(colors.primary),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        if (keyword.isNotEmpty()) {
+                            Surface(
+                                onClick = { keyword = "" },
+                                shape = RoundedCornerShape(8.dp),
+                                color = colors.surfaceVariant
+                            ) {
+                                Text(
+                                    text = "✕",
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                    style = MiuixTheme.textStyles.footnote1,
+                                    color = colors.onSurfaceVariantSummary
+                                )
+                            }
+                        }
+                    }
+                }
 
-        item(key = "telemetry_card") {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                MiSwitchItem(
-                    title = "拦截行为遥测",
-                    summary = "阻断行为统计、打点上报与后台保活",
-                    checked = cfg.blockTelemetry,
-                    onCheckedChange = controller::setBlockTelemetry,
-                    showDivider = true
-                )
-                MiSwitchItem(
-                    title = "拦截密码框统计",
-                    summary = "阻止密码输入框状态统计与次数回传",
-                    checked = cfg.blockPasswordStats,
-                    onCheckedChange = controller::setBlockPasswordStats,
-                    showDivider = true
-                )
-                MiSwitchItem(
-                    title = "拦截远端日志提取",
-                    summary = "阻断静默日志打包、上传与远端调试指令",
-                    checked = cfg.blockRemoteLogSalvage,
-                    onCheckedChange = controller::setBlockRemoteLogSalvage,
-                    showDivider = true
-                )
-                MiSwitchItem(
-                    title = "拦截搜狗行为记录",
-                    summary = "关闭搜索词、应用切换与定位记录入库",
-                    checked = cfg.blockMutualData,
-                    onCheckedChange = controller::setBlockMutualData,
-                    showDivider = false
-                )
+                Surface(
+                    onClick = {
+                        expandedTargets.clear()
+                        expandedCategories.clear()
+                    },
+                    shape = MiInnerShape,
+                    color = colors.surfaceContainer,
+                    border = BorderStroke(0.5.dp, colors.dividerLine)
+                ) {
+                    Text(
+                        text = "全部收起",
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        style = MiuixTheme.textStyles.footnote1,
+                        fontWeight = FontWeight.Medium,
+                        color = colors.onSurfaceContainer
+                    )
+                }
             }
         }
 
-        item(key = "cloud_payload_title") {
-            SmallTitle(
-                text = "云输入脱敏",
-                insideMargin = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
-            )
-        }
+        if (targetSections.isEmpty()) {
+            item(key = "empty_search") {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    insideMargin = PaddingValues(18.dp)
+                ) {
+                    Text(
+                        text = "未找到匹配「$keyword」的规则",
+                        style = MiuixTheme.textStyles.body2,
+                        color = colors.onSurfaceVariantSummary
+                    )
+                }
+            }
+        } else {
+            targetSections.forEach { (target, overview, groupedCategories) ->
+                val cardModel = state.imeCards.firstOrNull { it.target == target }
+                val targetExpanded = if (trimmedQuery.isNotEmpty()) {
+                    true
+                } else {
+                    expandedTargets[target] == true
+                }
 
-        item(key = "cloud_payload_card") {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                MiSwitchItem(
-                    title = "云输入脱敏",
-                    summary = "开启云输入时清除设备标识与定位字段",
-                    checked = cfg.sanitizeCloudPayload,
-                    onCheckedChange = controller::setSanitizeCloudPayload,
-                    showDivider = true
-                )
-                MiSwitchItem(
-                    title = "隐藏光标前后文字",
-                    summary = "只发送当前输入，不上传编辑框内已有内容",
-                    checked = cfg.stripCursorContext,
-                    enabled = cfg.sanitizeCloudPayload,
-                    onCheckedChange = controller::setStripCursorContext,
-                    showDivider = true
-                )
-                MiSwitchItem(
-                    title = "隐藏当前应用包名",
-                    summary = "不向云端与 AI 接口传递前台应用信息",
-                    checked = cfg.maskHostPackage,
-                    enabled = cfg.sanitizeCloudPayload,
-                    onCheckedChange = controller::setMaskHostPackage,
-                    showDivider = true
-                )
-                MiSwitchItem(
-                    title = "隐藏按键坐标",
-                    summary = "清除输入击键坐标与滑动轨迹字段",
-                    checked = cfg.stripTouchPositions,
-                    enabled = cfg.sanitizeCloudPayload,
-                    onCheckedChange = controller::setStripTouchPositions,
-                    showDivider = false
-                )
+                item(key = "ime_group_${target.name}") {
+                    ImeGroupHeaderCard(
+                        target = target,
+                        overview = overview,
+                        cardModel = cardModel,
+                        expanded = targetExpanded,
+                        onToggle = {
+                            val next = !(expandedTargets[target] == true)
+                            expandedTargets[target] = next
+                        }
+                    )
+                }
+
+                if (targetExpanded) {
+                    item(key = "ime_actions_${target.name}") {
+                        ImeActionBar(
+                            target = target,
+                            overview = overview,
+                            allCategoriesExpanded = groupedCategories.all { (category, _) ->
+                                expandedCategories[categoryExpandKey(target, category)] == true
+                            },
+                            onToggleManaged = { managed -> controller.setImeManaged(target, managed) },
+                            onToggleAllCategories = { expand ->
+                                for ((category, _) in groupedCategories) {
+                                    val key = categoryExpandKey(target, category)
+                                    if (expand) expandedCategories[key] = true else expandedCategories.remove(key)
+                                }
+                            },
+                            onResetDefaults = { controller.resetPackageDefaults(target.packageName) }
+                        )
+                    }
+
+                    groupedCategories.forEach { (category, itemsInCategory) ->
+                        val catKey = categoryExpandKey(target, category)
+                        val categoryExpanded = if (trimmedQuery.isNotEmpty()) {
+                            true
+                        } else {
+                            expandedCategories[catKey] == true
+                        }
+                        val activeInCategory = itemsInCategory.count { it.switchEnabled }
+                        val blockedInCategory = itemsInCategory.sumOf { it.report?.blockedCount ?: 0L }
+                        val worstStatus = aggregateCategoryStatus(itemsInCategory)
+
+                        item(key = "cat_header_${target.name}_${category.name}") {
+                            CategorySectionHeader(
+                                target = target,
+                                category = category,
+                                activeCount = activeInCategory,
+                                totalCount = itemsInCategory.size,
+                                blockedCount = blockedInCategory,
+                                worstStatus = worstStatus,
+                                expanded = categoryExpanded,
+                                onToggle = {
+                                    val next = !(expandedCategories[catKey] == true)
+                                    if (next) expandedCategories[catKey] = true else expandedCategories.remove(catKey)
+                                }
+                            )
+                        }
+
+                        if (categoryExpanded) {
+                            items(
+                                items = itemsInCategory,
+                                key = { it.spec.ruleId }
+                            ) { item ->
+                                Box(modifier = Modifier.padding(start = 10.dp)) {
+                                    GranularRuleCard(
+                                        item = item,
+                                        onToggle = { checked ->
+                                            controller.setRuleEnabled(item.spec.ruleId, checked)
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
+    }
+}
 
-        item(key = "privacy_strict_title") {
-            SmallTitle(
-                text = "权限与严格拦截",
-                insideMargin = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
-            )
-        }
+private fun categoryExpandKey(target: ImeTarget, category: RuleCategory): String =
+    "${target.name}:${category.name}"
 
-        item(key = "privacy_strict_card") {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                MiSwitchItem(
-                    title = "剪贴板保护",
-                    summary = "保留正常粘贴，拦截后台静默读取与统计",
-                    checked = cfg.clipboardPrivacy,
-                    onCheckedChange = controller::setClipboardPrivacy,
-                    showDivider = true
-                )
-                MiSwitchItem(
-                    title = "拦截通讯录与扫包",
-                    summary = "禁止读取通讯录、短信记录与已安装应用",
-                    checked = cfg.blockContactsAndAppScan,
-                    onCheckedChange = controller::setBlockContactsAndAppScan,
-                    showDivider = true
-                )
-                MiSwitchItem(
-                    title = "拦截动态代码加载",
-                    summary = "阻止远端下发并执行未签名脚本或 DEX",
-                    checked = cfg.blockUnsignedDynamicDex,
-                    onCheckedChange = controller::setBlockUnsignedDynamicDex,
-                    showDivider = true
-                )
-                MiSwitchItem(
-                    title = "拦截 HTTPDNS",
-                    summary = "禁止搜狗与百度绕过系统 DNS 解析，默认关闭",
-                    checked = cfg.blockHttpDns,
-                    onCheckedChange = controller::setBlockHttpDns,
-                    showDivider = true
-                )
-                MiSwitchItem(
-                    title = "拦截小爱热词追踪",
-                    summary = "禁止跨应用上报热词纠错前后的文本，默认关闭",
-                    checked = cfg.blockXiaoAiHotwordTracker,
-                    onCheckedChange = controller::setBlockXiaoAiHotwordTracker,
-                    showDivider = false
+private fun shortImeName(target: ImeTarget): String = when (target) {
+    ImeTarget.SOGOU -> "搜狗"
+    ImeTarget.BAIDU -> "百度"
+    ImeTarget.XIAOAI -> "小爱"
+}
+
+private fun aggregateCategoryStatus(items: List<RuleDisplayItem>): HookMatchStatus {
+    val statuses = items.map { it.effectiveStatus }
+    return when {
+        HookMatchStatus.FAILED in statuses -> HookMatchStatus.FAILED
+        HookMatchStatus.DEGRADED in statuses -> HookMatchStatus.DEGRADED
+        HookMatchStatus.FALLBACK in statuses -> HookMatchStatus.FALLBACK
+        HookMatchStatus.ACTIVE in statuses -> HookMatchStatus.ACTIVE
+        HookMatchStatus.PENDING in statuses -> HookMatchStatus.PENDING
+        else -> HookMatchStatus.SKIPPED
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ImeGroupHeaderCard(
+    target: ImeTarget,
+    overview: TargetRuleOverview,
+    cardModel: ImeCardUiModel?,
+    expanded: Boolean,
+    onToggle: () -> Unit
+) {
+    val colors = MiuixTheme.colorScheme
+    val statusColors = MiThemeExtras.statusColors
+    val health = cardModel?.healthSummary
+    val (healthBg, healthFg, healthDot) = when (health?.severity ?: RuleHealthSeverity.NEUTRAL) {
+        RuleHealthSeverity.HEALTHY -> Triple(statusColors.okContainer, statusColors.onOkContainer, statusColors.ok)
+        RuleHealthSeverity.FALLBACK_OK -> Triple(statusColors.infoContainer, statusColors.onInfoContainer, statusColors.info)
+        RuleHealthSeverity.WARNING -> Triple(statusColors.warningContainer, statusColors.onWarningContainer, statusColors.warning)
+        RuleHealthSeverity.CRITICAL_ERROR -> Triple(statusColors.errorContainer, statusColors.onErrorContainer, statusColors.error)
+        RuleHealthSeverity.NEUTRAL -> Triple(statusColors.neutralContainer, statusColors.onNeutralContainer, statusColors.neutral)
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        insideMargin = PaddingValues(0.dp)
+    ) {
+        Surface(
+            onClick = onToggle,
+            modifier = Modifier.fillMaxWidth(),
+            color = colors.surfaceContainer
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = target.displayName,
+                            style = MiuixTheme.textStyles.title4,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colors.onSurfaceContainer
+                        )
+                        MiStatusBadge(
+                            text = "${overview.totalCount} 项",
+                            containerColor = colors.primaryContainer,
+                            contentColor = colors.onPrimaryContainer
+                        )
+                        MiStatusBadge(
+                            text = health?.headline ?: "待激活",
+                            containerColor = healthBg,
+                            contentColor = healthFg,
+                            dotColor = healthDot
+                        )
+                    }
+                    Text(
+                        text = "已开启 ${overview.enabledCount}/${overview.totalCount} · 拦截 ${overview.blockedCount} 次 · ${overview.resolveSummaryText}",
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = if (overview.managed) colors.onSurfaceVariantSummary else statusColors.warning
+                    )
+                }
+                Text(
+                    text = if (expanded) "▾" else "▸",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.onSurfaceVariantSummary
                 )
             }
-        }
-
-        item(key = "diag_title") {
-            SmallTitle(
-                text = "规则状态",
-                insideMargin = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
-            )
-        }
-
-        item(key = "diag_filter") {
-            val filters = RuleTargetFilter.entries
-            MiSegmentedControl(
-                options = filters.map { it.label },
-                selectedIndex = filters.indexOf(selectedFilter).coerceAtLeast(0),
-                onSelected = { idx -> controller.selectRuleFilter(filters[idx]) }
-            )
-        }
-
-        items(
-            items = filteredRules,
-            key = { it.spec.ruleId }
-        ) { item ->
-            HookRuleDiagnosticCard(item = item)
         }
     }
 }
 
 @Composable
-private fun HookRuleDiagnosticCard(item: RuleDisplayItem) {
+private fun ImeActionBar(
+    target: ImeTarget,
+    overview: TargetRuleOverview,
+    allCategoriesExpanded: Boolean,
+    onToggleManaged: (Boolean) -> Unit,
+    onToggleAllCategories: (Boolean) -> Unit,
+    onResetDefaults: () -> Unit
+) {
+    val colors = MiuixTheme.colorScheme
+    val statusColors = MiThemeExtras.statusColors
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MiInnerShape,
+        color = colors.surfaceContainer,
+        border = BorderStroke(0.5.dp, colors.dividerLine)
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (overview.managed) "已接管 ${shortImeName(target)}" else "暂停接管",
+                        style = MiuixTheme.textStyles.body2,
+                        fontWeight = FontWeight.Medium,
+                        color = if (overview.managed) colors.onSurfaceContainer else statusColors.warning
+                    )
+                    Switch(
+                        checked = overview.managed,
+                        onCheckedChange = onToggleManaged
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TextButton(
+                        text = if (allCategoriesExpanded) "收起分类" else "展开分类",
+                        onClick = { onToggleAllCategories(!allCategoriesExpanded) },
+                        insideMargin = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                    TextButton(
+                        text = "恢复默认",
+                        enabled = overview.hasOverrides,
+                        onClick = onResetDefaults,
+                        insideMargin = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
+            }
+            if (!overview.managed) {
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 6.dp),
+                    thickness = 0.5.dp,
+                    color = colors.dividerLine
+                )
+                Text(
+                    text = "已暂停接管，恢复接管后按各规则开关生效",
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = statusColors.warning
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CategorySectionHeader(
+    target: ImeTarget,
+    category: RuleCategory,
+    activeCount: Int,
+    totalCount: Int,
+    blockedCount: Long,
+    worstStatus: HookMatchStatus,
+    expanded: Boolean,
+    onToggle: () -> Unit
+) {
+    val colors = MiuixTheme.colorScheme
+    val statusColors = MiThemeExtras.statusColors
+    val (statusLabel, statusBg, statusFg, statusDot) = when (worstStatus) {
+        HookMatchStatus.ACTIVE -> Quad("正常", statusColors.okContainer, statusColors.onOkContainer, statusColors.ok)
+        HookMatchStatus.FALLBACK -> Quad("结构兜底", statusColors.infoContainer, statusColors.onInfoContainer, statusColors.info)
+        HookMatchStatus.DEGRADED -> Quad("部分降级", statusColors.warningContainer, statusColors.onWarningContainer, statusColors.warning)
+        HookMatchStatus.FAILED -> Quad("未命中", statusColors.errorContainer, statusColors.onErrorContainer, statusColors.error)
+        HookMatchStatus.SKIPPED -> Quad("已跳过", statusColors.neutralContainer, statusColors.onNeutralContainer, statusColors.neutral)
+        HookMatchStatus.PENDING -> Quad("待激活", statusColors.neutralContainer, statusColors.onNeutralContainer, statusColors.neutral)
+    }
+
+    Surface(
+        onClick = onToggle,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 4.dp),
+        shape = MiInnerShape,
+        color = colors.surfaceVariant
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            FlowRow(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = "${shortImeName(target)} › ${ruleCategoryLabel(category)}",
+                    style = MiuixTheme.textStyles.body2,
+                    fontWeight = FontWeight.SemiBold,
+                    color = colors.onSurfaceContainer
+                )
+                MiStatusBadge(
+                    text = "$activeCount/$totalCount",
+                    containerColor = colors.primaryContainer,
+                    contentColor = colors.onPrimaryContainer
+                )
+                MiStatusBadge(
+                    text = statusLabel,
+                    containerColor = statusBg,
+                    contentColor = statusFg,
+                    dotColor = statusDot
+                )
+                if (blockedCount > 0L) {
+                    MiStatusBadge(
+                        text = "拦截 $blockedCount 次",
+                        containerColor = statusColors.infoContainer,
+                        contentColor = statusColors.onInfoContainer
+                    )
+                }
+            }
+            Text(
+                text = if (expanded) "▾" else "▸",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                color = colors.onSurfaceVariantSummary
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun GranularRuleCard(
+    item: RuleDisplayItem,
+    onToggle: (Boolean) -> Unit
+) {
     val colors = MiuixTheme.colorScheme
     val statusColors = MiThemeExtras.statusColors
     val report = item.report
     val status = item.effectiveStatus
     val sourceTokens = parseSourceTokens(report?.source.orEmpty())
+    val primaryToken = pickPrimarySourceToken(sourceTokens)
+    val sourceLabel = if (primaryToken.isNotBlank()) formatSourceTokenLabel(primaryToken) else ""
     val badgeLabelText = formatRuleStatusBadge(
         status = status,
         rawSource = report?.source.orEmpty(),
         critical = item.spec.critical
     )
+    val switchInteractable = item.spec.isOverlayPill || item.targetManaged
 
     val (badgeLabel, badgeBg, badgeFg, dotColor) = when (status) {
         HookMatchStatus.ACTIVE -> Quad(
@@ -292,42 +650,70 @@ private fun HookRuleDiagnosticCard(item: RuleDisplayItem) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
-                    MiStatusBadge(
-                        text = item.spec.target.displayName.removeSuffix("小米版").removeSuffix("输入法"),
-                        containerColor = colors.primaryContainer,
-                        contentColor = colors.onPrimaryContainer
+                    Text(
+                        text = item.spec.title,
+                        style = MiuixTheme.textStyles.title4,
+                        fontWeight = FontWeight.SemiBold,
+                        color = colors.onSurfaceContainer
                     )
-                    if (item.spec.critical) {
-                        MiStatusBadge(
-                            text = "关键",
-                            containerColor = statusColors.warningContainer,
-                            contentColor = statusColors.onWarningContainer
-                        )
-                    }
+                    Text(
+                        text = item.spec.description,
+                        style = MiuixTheme.textStyles.body2,
+                        color = colors.onSurfaceVariantSummary
+                    )
                 }
+                Switch(
+                    checked = item.toggleChecked,
+                    onCheckedChange = onToggle,
+                    enabled = switchInteractable
+                )
+            }
+
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 MiStatusBadge(
                     text = badgeLabel,
                     containerColor = badgeBg,
                     contentColor = badgeFg,
                     dotColor = dotColor
                 )
+                if (!item.spec.defaultEnabled) {
+                    MiStatusBadge(
+                        text = "默认关闭",
+                        containerColor = statusColors.neutralContainer,
+                        contentColor = statusColors.onNeutralContainer
+                    )
+                }
+                if (item.spec.critical) {
+                    MiStatusBadge(
+                        text = "核心防回传",
+                        containerColor = statusColors.warningContainer,
+                        contentColor = statusColors.onWarningContainer
+                    )
+                }
+                if (item.spec.isOverlayPill) {
+                    MiStatusBadge(
+                        text = "悬浮入口",
+                        containerColor = colors.primaryContainer,
+                        contentColor = colors.onPrimaryContainer
+                    )
+                }
+                if (sourceLabel.isNotBlank()) {
+                    MiStatusBadge(
+                        text = sourceLabel,
+                        containerColor = statusColors.infoContainer,
+                        contentColor = statusColors.onInfoContainer
+                    )
+                }
             }
-
-            Text(
-                text = item.spec.title,
-                style = MiuixTheme.textStyles.title4,
-                fontWeight = FontWeight.SemiBold,
-                color = colors.onSurfaceContainer
-            )
-            Text(
-                text = item.spec.description,
-                style = MiuixTheme.textStyles.body2,
-                color = colors.onSurfaceVariantSummary
-            )
 
             Surface(
                 modifier = Modifier.fillMaxWidth(),
@@ -348,10 +734,15 @@ private fun HookRuleDiagnosticCard(item: RuleDisplayItem) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "ID: ${item.spec.ruleId}",
+                            text = item.spec.ruleId,
                             style = MiuixTheme.textStyles.footnote2,
                             fontFamily = FontFamily.Monospace,
-                            color = colors.onSurfaceVariantSummary
+                            color = colors.onSurfaceVariantSummary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp)
                         )
                         Text(
                             text = "拦截 $blockedCount 次",
@@ -388,10 +779,10 @@ private fun HookRuleDiagnosticCard(item: RuleDisplayItem) {
                         )
                     } else if (report == null) {
                         Text(
-                            text = if (item.switchEnabled) {
-                                "等待输入法启动后上报"
-                            } else {
-                                "规则未开启"
+                            text = when {
+                                !switchInteractable -> "已暂停接管当前输入法"
+                                item.switchEnabled -> "等待输入法启动后上报"
+                                else -> "规则未开启"
                             },
                             style = MiuixTheme.textStyles.footnote2,
                             color = colors.onSurfaceVariantSummary
@@ -409,13 +800,7 @@ internal fun formatRuleStatusBadge(
     critical: Boolean = false
 ): String {
     val tokens = parseSourceTokens(rawSource)
-    val primaryToken = when {
-        "DEXKIT" in tokens -> "DEXKIT"
-        "CACHE" in tokens -> "CACHE"
-        "STRUCTURAL_FALLBACK" in tokens -> "STRUCTURAL_FALLBACK"
-        "FAST_PATH" in tokens -> "FAST_PATH"
-        else -> tokens.firstOrNull().orEmpty()
-    }
+    val primaryToken = pickPrimarySourceToken(tokens)
     val sourceLabel = if (primaryToken.isNotBlank()) formatSourceTokenLabel(primaryToken) else ""
     return when (status) {
         HookMatchStatus.ACTIVE -> if (sourceLabel.isNotBlank()) "正常 · $sourceLabel" else "正常"

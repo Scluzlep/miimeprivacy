@@ -17,10 +17,12 @@ import com.scluzlep.miimeprivacy.model.HookRuleReport
 import com.scluzlep.miimeprivacy.model.HookRuleSpec
 import com.scluzlep.miimeprivacy.model.ImeRuntimeDiagnostics
 import com.scluzlep.miimeprivacy.model.ImeTarget
+import com.scluzlep.miimeprivacy.model.RuleCategory
 import io.github.libxposed.service.HookedTarget
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONObject
 
 enum class MainTab(val title: String) {
     OVERVIEW("总览"),
@@ -34,7 +36,17 @@ enum class RuleTargetFilter(val label: String, val target: ImeTarget?) {
     ALL("全部", null),
     SOGOU("搜狗", ImeTarget.SOGOU),
     BAIDU("百度", ImeTarget.BAIDU),
-    XIAOAI("小爱", ImeTarget.XIAOAI)
+    XIAOAI("小爱", ImeTarget.XIAOAI);
+
+    companion object {
+        val targetTabs: List<RuleTargetFilter> = listOf(SOGOU, BAIDU, XIAOAI)
+
+        fun fromTarget(target: ImeTarget): RuleTargetFilter = when (target) {
+            ImeTarget.SOGOU -> SOGOU
+            ImeTarget.BAIDU -> BAIDU
+            ImeTarget.XIAOAI -> XIAOAI
+        }
+    }
 }
 
 enum class RuleHealthSeverity {
@@ -108,6 +120,49 @@ data class SymbolResolutionSummary(
     val canClearSymbolCache: Boolean = false
 )
 
+data class TargetRuleOverview(
+    val target: ImeTarget,
+    val managed: Boolean,
+    val enabledCount: Int,
+    val totalCount: Int,
+    val blockedCount: Long,
+    val resolveSummaryText: String,
+    val hasOverrides: Boolean
+) {
+    fun formattedSummary(): String {
+        return "已启用 $enabledCount/$totalCount 项 · 实测拦截 $blockedCount 次 · $resolveSummaryText"
+    }
+}
+
+fun ruleCategoryLabel(category: RuleCategory): String = when (category) {
+    RuleCategory.PRIVACY_GATE -> "隐私门控"
+    RuleCategory.DEVICE_ID -> "设备标识"
+    RuleCategory.TELEMETRY -> "遥测与埋点"
+    RuleCategory.CLOUD_PRIVACY -> "云端脱敏"
+    RuleCategory.CONTEXT_STRIP -> "上下文剥离"
+    RuleCategory.CLIPBOARD -> "剪贴板"
+    RuleCategory.SCAN_AND_LOCATION -> "扫描与定位"
+    RuleCategory.DYNAMIC_AND_NET -> "动态加载与网络"
+    RuleCategory.UI_ENHANCE -> "界面与悬浮"
+}
+
+/**
+ * Resets all rule overrides belonging to [targetPackage] back to their catalog defaults
+ * without altering overrides for other target packages.
+ */
+fun PrivacyConfig.resetPackageDefaults(targetPackage: String): PrivacyConfig {
+    val targetRuleIds = HookRuleCatalog.rulesForPackage(targetPackage)
+        .map { it.ruleId }
+        .toSet()
+    if (targetRuleIds.isEmpty()) return this
+    val remaining = ruleOverrides.filterKeys { it !in targetRuleIds }
+    return if (remaining.size == ruleOverrides.size) {
+        this
+    } else {
+        copy(ruleOverrides = remaining)
+    }
+}
+
 internal fun parseSourceTokens(rawSource: String): List<String> {
     if (rawSource.isBlank()) return emptyList()
     return rawSource.split(',')
@@ -160,7 +215,9 @@ data class RuleDisplayItem(
     val spec: HookRuleSpec,
     val report: HookRuleReport?,
     val effectiveStatus: HookMatchStatus,
-    val switchEnabled: Boolean
+    val switchEnabled: Boolean,
+    val toggleChecked: Boolean = switchEnabled,
+    val targetManaged: Boolean = true
 )
 
 data class PrivacyUiState(
@@ -180,21 +237,34 @@ data class PrivacyUiState(
 object PrivacyUiStateBuilder {
 
     fun isRuleSwitchEnabled(config: PrivacyConfig, spec: HookRuleSpec): Boolean {
-        return when (spec.configSwitchKey) {
-            PrivacyConfig.KEY_BLOCK_TELEMETRY -> config.blockTelemetry
-            PrivacyConfig.KEY_BLOCK_PASSWORD_STATS -> config.blockPasswordStats
-            PrivacyConfig.KEY_BLOCK_REMOTE_LOG_SALVAGE -> config.blockRemoteLogSalvage
-            PrivacyConfig.KEY_SANITIZE_CLOUD_PAYLOAD -> config.sanitizeCloudPayload
-            PrivacyConfig.KEY_CLIPBOARD_PRIVACY -> config.clipboardPrivacy
-            PrivacyConfig.KEY_BLOCK_CONTACTS_AND_APP_SCAN -> config.blockContactsAndAppScan
-            PrivacyConfig.KEY_BLOCK_UNSIGNED_DYNAMIC_DEX -> config.blockUnsignedDynamicDex
-            PrivacyConfig.KEY_BLOCK_MUTUAL_DATA -> config.blockMutualData
-            PrivacyConfig.KEY_BLOCK_HTTP_DNS -> config.blockHttpDns
-            PrivacyConfig.KEY_BLOCK_XIAOAI_HOTWORD_TRACKER -> config.blockXiaoAiHotwordTracker
-            PrivacyConfig.KEY_SHOW_KEYBOARD_PILL -> config.showKeyboardPill
-            null -> true
-            else -> true
+        return config.isRuleToggleChecked(spec.ruleId)
+    }
+
+    fun summarizeTargetRules(state: PrivacyUiState, target: ImeTarget): TargetRuleOverview {
+        val targetItems = state.ruleItems.filter { it.spec.target == target }
+        val card = state.imeCards.firstOrNull { it.target == target }
+        val targetRuleIds = targetItems.map { it.spec.ruleId }.toSet()
+        val hasOverrides = state.config.ruleOverrides.keys.any { it in targetRuleIds }
+        return TargetRuleOverview(
+            target = target,
+            managed = state.config.isImeManaged(target),
+            enabledCount = targetItems.count { it.switchEnabled },
+            totalCount = targetItems.size,
+            blockedCount = card?.healthSummary?.blockedCount ?: 0L,
+            resolveSummaryText = card?.cardResolveSummaryText ?: "自动 · 待启动",
+            hasOverrides = hasOverrides
+        )
+    }
+
+    fun parseImportConfigJson(rawJson: String): Result<PrivacyConfig> {
+        val trimmed = rawJson.trim()
+        if (trimmed.isEmpty()) {
+            return Result.failure(IllegalArgumentException("配置内容为空"))
         }
+        val jsonObj = runCatching { JSONObject(trimmed) }.getOrElse { err ->
+            return Result.failure(IllegalArgumentException("JSON 解析失败：${err.message ?: "格式错误"}"))
+        }
+        return Result.success(PrivacyConfig.fromJsonObject(jsonObj))
     }
 
     fun summarizeImeHealth(
@@ -358,7 +428,9 @@ object PrivacyUiStateBuilder {
         val ruleItems = HookRuleCatalog.allRules().map { spec ->
             val diag = diagnosticsMap[spec.target]
             val report = diag?.rules?.firstOrNull { it.ruleId == spec.ruleId }
-            val switchEnabled = config.isImeManaged(spec.target) && isRuleSwitchEnabled(config, spec)
+            val targetManaged = config.isImeManaged(spec.target)
+            val toggleChecked = isRuleSwitchEnabled(config, spec)
+            val switchEnabled = config.isRuleEnabled(spec.ruleId)
             val effectiveStatus = report?.status ?: if (!switchEnabled) {
                 HookMatchStatus.SKIPPED
             } else {
@@ -368,7 +440,9 @@ object PrivacyUiStateBuilder {
                 spec = spec,
                 report = report,
                 effectiveStatus = effectiveStatus,
-                switchEnabled = switchEnabled
+                switchEnabled = switchEnabled,
+                toggleChecked = toggleChecked,
+                targetManaged = targetManaged
             )
         }
 
@@ -470,12 +544,12 @@ class PrivacyUiController(context: Context) {
         _selectedRuleFilter.value = filter
     }
 
+    fun selectRuleTarget(target: ImeTarget) {
+        _selectedRuleFilter.value = RuleTargetFilter.fromTarget(target)
+    }
+
     fun openDiagnosticsFor(target: ImeTarget) {
-        _selectedRuleFilter.value = when (target) {
-            ImeTarget.SOGOU -> RuleTargetFilter.SOGOU
-            ImeTarget.BAIDU -> RuleTargetFilter.BAIDU
-            ImeTarget.XIAOAI -> RuleTargetFilter.XIAOAI
-        }
+        _selectedRuleFilter.value = RuleTargetFilter.fromTarget(target)
         _selectedTab.value = MainTab.RULES
     }
 
@@ -535,56 +609,47 @@ class PrivacyUiController(context: Context) {
         _actionFeedback.value = XposedServiceManager.clearSymbolCacheForTarget(target)
     }
 
-    fun setBlockTelemetry(enabled: Boolean) {
-        XposedServiceManager.updateConfig { it.copy(blockTelemetry = enabled) }
+    fun clearAllSymbolCaches() {
+        for (target in ImeTarget.entries) {
+            XposedServiceManager.clearSymbolCacheForTarget(target)
+        }
+        _actionFeedback.value = "已清除全部输入法 DexKit 符号缓存"
     }
 
-    fun setBlockPasswordStats(enabled: Boolean) {
-        XposedServiceManager.updateConfig { it.copy(blockPasswordStats = enabled) }
+    fun setRuleEnabled(ruleId: String, enabled: Boolean) {
+        XposedServiceManager.updateConfig { it.withRuleOverride(ruleId, enabled) }
     }
 
-    fun setBlockRemoteLogSalvage(enabled: Boolean) {
-        XposedServiceManager.updateConfig { it.copy(blockRemoteLogSalvage = enabled) }
+    fun resetPackageDefaults(targetPackage: String) {
+        val target = ImeTarget.fromPackage(targetPackage)
+        XposedServiceManager.updateConfig { it.resetPackageDefaults(targetPackage) }
+        val name = target?.displayName ?: targetPackage
+        _actionFeedback.value = "已恢复 $name 默认规则"
     }
 
-    fun setBlockMutualData(enabled: Boolean) {
-        XposedServiceManager.updateConfig { it.copy(blockMutualData = enabled) }
+    fun resetTargetDefaults(target: ImeTarget) {
+        resetPackageDefaults(target.packageName)
     }
 
-    fun setSanitizeCloudPayload(enabled: Boolean) {
-        XposedServiceManager.updateConfig { it.copy(sanitizeCloudPayload = enabled) }
+    fun exportConfigJson(): String {
+        val cfg = XposedServiceManager.config.value
+        val json = cfg.toJson()
+        _actionFeedback.value = "已生成 v${cfg.configVersion} 配置（含 ${cfg.ruleOverrides.size} 项规则覆盖）"
+        return json
     }
 
-    fun setStripCursorContext(enabled: Boolean) {
-        XposedServiceManager.updateConfig { it.copy(stripCursorContext = enabled) }
+    fun importConfigJson(rawJson: String): Boolean {
+        val parsed = PrivacyUiStateBuilder.parseImportConfigJson(rawJson).getOrElse { err ->
+            _actionFeedback.value = err.message ?: "配置 JSON 格式无效"
+            return false
+        }
+        val committed = XposedServiceManager.updateConfig(parsed)
+        _actionFeedback.value = "已导入 v${committed.configVersion} 配置（含 ${committed.ruleOverrides.size} 项规则覆盖）"
+        return true
     }
 
-    fun setMaskHostPackage(enabled: Boolean) {
-        XposedServiceManager.updateConfig { it.copy(maskHostPackage = enabled) }
-    }
-
-    fun setStripTouchPositions(enabled: Boolean) {
-        XposedServiceManager.updateConfig { it.copy(stripTouchPositions = enabled) }
-    }
-
-    fun setClipboardPrivacy(enabled: Boolean) {
-        XposedServiceManager.updateConfig { it.copy(clipboardPrivacy = enabled) }
-    }
-
-    fun setBlockContactsAndAppScan(enabled: Boolean) {
-        XposedServiceManager.updateConfig { it.copy(blockContactsAndAppScan = enabled) }
-    }
-
-    fun setBlockUnsignedDynamicDex(enabled: Boolean) {
-        XposedServiceManager.updateConfig { it.copy(blockUnsignedDynamicDex = enabled) }
-    }
-
-    fun setBlockHttpDns(enabled: Boolean) {
-        XposedServiceManager.updateConfig { it.copy(blockHttpDns = enabled) }
-    }
-
-    fun setBlockXiaoAiHotwordTracker(enabled: Boolean) {
-        XposedServiceManager.updateConfig { it.copy(blockXiaoAiHotwordTracker = enabled) }
+    fun notifyFeedback(message: String) {
+        _actionFeedback.value = message
     }
 
     fun setShowKeyboardPill(enabled: Boolean) {

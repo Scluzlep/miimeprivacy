@@ -49,7 +49,17 @@ jobs:
         with:
           gradle-version: "9.7.0"
       - name: Run unit tests, lint, and debug build
-        run: gradle :app:testDebugUnitTest :app:lintDebug :app:assembleDebug --stacktrace --no-daemon
+        run: gradle :app:testDebugUnitTest :app:lintDebug :app:lintVitalRelease :app:assembleDebug --stacktrace --no-daemon
+      - name: Upload test and lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: miimeprivacy-reports-${{ github.run_number }}
+          path: |
+            app/build/reports/tests/
+            app/build/reports/lint-results-*.html
+            app/build/reports/lint-results-*.xml
+          retention-days: 7
       - name: Verify API 102 module metadata, DexKit packaging, and manifest in debug APK
         shell: bash
         run: |
@@ -107,9 +117,10 @@ jobs:
             echo "::error::Legacy xposedminversion metadata present"
             exit 1
           fi
-      - name: Verify v1.2 integration invariants
-        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/heads/feat/') || startsWith(github.ref, 'refs/heads/fix/')
+      - name: Verify v2.0 integration invariants
         shell: bash
+        env:
+          GITHUB_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
           DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
@@ -123,41 +134,119 @@ jobs:
               text=True,
           )
 
-          xiaoai = pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/xposed/targets/XiaoAiHookPack.kt").read_text(encoding="utf-8")
-          assert "CLASS_ONETRACK_LOCAL_IMP" in xiaoai, "XiaoAiHookPack missing CLASS_ONETRACK_LOCAL_IMP"
-          assert "com.xiaomi.onetrack.api.av" in xiaoai, "XiaoAiHookPack missing com.xiaomi.onetrack.api.av"
-          assert "ONETRACK_LOCAL_IMP_STRINGS" in xiaoai, "XiaoAiHookPack missing ONETRACK_LOCAL_IMP_STRINGS"
-          assert "setDisable" in xiaoai, "XiaoAiHookPack missing OneTrack.setDisable"
-          assert "pendingInitContexts" not in xiaoai, "XiaoAiHookPack still contains pendingInitContexts"
+          # 1. Brand rename invariants ("Mi IMEPlus" only, zero "米输净盾" or "Mi IME Plus")
+          brand_targets = [
+              pathlib.Path("app/src/main/res/values/strings.xml"),
+              pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/ui/MainActivity.kt"),
+              pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/ui/screens/SettingsTab.kt"),
+              pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/xposed/overlay/QuickPanelViewFactory.kt"),
+              pathlib.Path("README.md"),
+          ]
+          for path in brand_targets:
+              text = path.read_text(encoding="utf-8")
+              assert "Mi IMEPlus" in text, f"{path} missing exact brand 'Mi IMEPlus'"
 
-          baidu = pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/xposed/targets/BaiduHookPack.kt").read_text(encoding="utf-8")
-          assert "zg0.e" in baidu, "BaiduHookPack missing direct zg0.e lookup for l11.b#f1"
-          assert "dexKitFinder" in baidu, "BaiduHookPack missing dexKitFinder coverage"
-          assert 'SymbolResolver.loadClassOrNull("l11.b", cl)?.declaredMethods' not in baidu, "BaiduHookPack still scans l11.b.declaredMethods"
+          scan_files = [p for p in pathlib.Path("app/src").rglob("*") if p.is_file()] + [pathlib.Path("README.md")]
+          for path in scan_files:
+              try:
+                  text = path.read_text(encoding="utf-8")
+              except UnicodeDecodeError:
+                  continue
+              assert "米输净盾" not in text, f"Legacy brand '米输净盾' found in {path}"
+              assert "Mi IME Plus" not in text, f"Forbidden spaced brand 'Mi IME Plus' found in {path}"
 
+          # 2. Version & tag alignment invariants
+          gradle_text = pathlib.Path("app/build.gradle.kts").read_text(encoding="utf-8")
+          code_match = re.search(r'MIIME_VERSION_CODE[^\n]*\?:\s*(\d+)', gradle_text)
+          name_match = re.search(r'MIIME_VERSION_NAME[^\n]*\?:\s*"([^"]+)"', gradle_text)
+          assert code_match and code_match.group(1) == "2000001", f"versionCode default must be 2000001, got {code_match.group(1) if code_match else None}"
+          assert name_match and name_match.group(1) == "2.0", f"versionName default must be '2.0', got {name_match.group(1) if name_match else None}"
+          github_ref = os.environ.get("GITHUB_REF", "")
+          if github_ref.startswith("refs/tags/v"):
+              tag_ver = github_ref[len("refs/tags/v"):]
+              assert tag_ver == name_match.group(1), f"Tag version v{tag_ver} does not match versionName '{name_match.group(1)}'"
+
+          # 3. 74-rule HookRuleCatalog invariants + matching *HookPack.kt coverage + floating panel boundary
+          spec_text = pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/model/HookRuleSpec.kt").read_text(encoding="utf-8")
+          const_map = dict(re.findall(r'const\s+val\s+(RULE_[A-Z0-9_]+)\s*=\s*"([^"]+)"', spec_text))
+          catalog_match = re.search(r'private\s+val\s+catalog:\s*List<HookRuleSpec>\s*=\s*listOf\((.*?)\)\s*private\s+val\s+byId', spec_text, re.S)
+          assert catalog_match, "Could not locate HookRuleCatalog.catalog list"
+          raw_entries = re.findall(r'ruleId\s*=\s*(RULE_[A-Z0-9_]+|"[^"]+")', catalog_match.group(1))
+          catalog_rules = []
+          for raw in raw_entries:
+              if raw.startswith('"'):
+                  rid = raw.strip('"')
+                  cname = None
+              else:
+                  cname = raw
+                  rid = const_map[raw]
+              catalog_rules.append((cname, rid))
+
+          assert len(catalog_rules) == 74, f"Expected 74 catalog rules, got {len(catalog_rules)}"
+          assert len({rid for _, rid in catalog_rules}) == 74, "Duplicate ruleId found in HookRuleCatalog"
+          sogou_rules = [(c, r) for c, r in catalog_rules if r.startswith("sogou.")]
+          baidu_rules = [(c, r) for c, r in catalog_rules if r.startswith("baidu.")]
+          xiaoai_rules = [(c, r) for c, r in catalog_rules if r.startswith("xiaoai.")]
+          assert len(sogou_rules) == 30, f"Expected 30 sogou.* rules, got {len(sogou_rules)}"
+          assert len(baidu_rules) == 24, f"Expected 24 baidu.* rules, got {len(baidu_rules)}"
+          assert len(xiaoai_rules) == 20, f"Expected 20 xiaoai.* rules, got {len(xiaoai_rules)}"
+
+          pack_checks = [
+              (pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/xposed/targets/SogouHookPack.kt"), sogou_rules),
+              (pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/xposed/targets/BaiduHookPack.kt"), baidu_rules),
+              (pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/xposed/targets/XiaoAiHookPack.kt"), xiaoai_rules),
+          ]
+          for pack_path, rules in pack_checks:
+              pack_text = pack_path.read_text(encoding="utf-8")
+              missing = [r for c, r in rules if not ((c and c in pack_text) or (f'"{r}"' in pack_text))]
+              assert not missing, f"{pack_path.name} missing rule IDs: {missing}"
+
+          quick_panel = pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/xposed/overlay/QuickPanelViewFactory.kt").read_text(encoding="utf-8")
+          for forbidden in (
+              "HookRuleCatalog.allRules",
+              "HookRuleCatalog.rulesFor",
+              "withRuleOverride",
+              "isRuleToggleChecked",
+              "符号缓存",
+              "clearCacheNow",
+              "clearSymbolCacheForTarget",
+              "SymbolResolveMode",
+              "DexKit",
+          ):
+              assert forbidden not in quick_panel, f"QuickPanelViewFactory must not contain '{forbidden}'"
+
+          # 4. Config, UI, and unit test presence invariants
           cfg = pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/config/PrivacyConfig.kt").read_text(encoding="utf-8")
           assert re.search(r"MIN_PILL_ALPHA\s*=\s*0\.10f", cfg), "PrivacyConfig MIN_PILL_ALPHA must be 0.10f"
           assert re.search(r"MAX_PILL_OFFSET_DP\s*=\s*2000\b", cfg), "PrivacyConfig MAX_PILL_OFFSET_DP must be 2000"
           assert "hidePillInLandscape" in cfg, "PrivacyConfig missing hidePillInLandscape"
           assert "SymbolResolveMode" in cfg, "PrivacyConfig missing SymbolResolveMode"
+          assert "KEY_RULE_OVERRIDES" in cfg and "KEY_CONFIG_VERSION" in cfg, "PrivacyConfig missing v2 rule_overrides/config_version"
 
           settings = pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/ui/screens/SettingsTab.kt").read_text(encoding="utf-8")
           assert '"关于"' in settings, "SettingsTab missing 关于 title"
           assert '"Scluzlep"' in settings, "SettingsTab missing Scluzlep developer credit"
           assert "https://github.com/Scluzlep/miimeprivacy" in settings, "SettingsTab missing GitHub URL"
-          for removed in ("关于与安全边界", "Xposed 与签名校验规范", "已审计目标输入法基准版本", "透明与克制原则"):
+          assert "exportConfigJson" in settings and "importConfigJson" in settings, "SettingsTab missing JSON import/export"
+          for removed in ("关于与安全边界", "Xposed 与签名校验规范", "已审计目标输入法基准版本", "透明与克制原则", "dexkit_cache_card", "dexkit_cache_title"):
               assert removed not in settings, f"SettingsTab still contains removed section: {removed}"
 
           overview = pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/ui/screens/OverviewTab.kt").read_text(encoding="utf-8")
+          assert "GlobalCloudCard" in overview and "allowCloudInput" in overview, "OverviewTab missing GlobalCloudCard/allowCloudInput"
           assert "清除 DexKit 符号缓存" in overview, "OverviewTab missing clear DexKit cache button"
           assert "当前解析方式" in overview, "OverviewTab missing resolve method label"
 
           rules_tab = pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/ui/screens/RulesTab.kt").read_text(encoding="utf-8")
+          assert "put(it, true)" not in rules_tab, "RulesTab must not default-expand all categories via put(it, true)"
+          assert "ImeTarget" in rules_tab and "RuleCategory" in rules_tab, "RulesTab missing 3-level ImeTarget/RuleCategory grouping"
           assert "formatRuleStatusBadge" in rules_tab, "RulesTab missing formatRuleStatusBadge"
+          assert "setRuleEnabled" in rules_tab and "resetPackageDefaults" in rules_tab, "RulesTab missing fine-grained v2 rule controls"
 
-          quick_panel = pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/xposed/overlay/QuickPanelViewFactory.kt").read_text(encoding="utf-8")
-          assert "符号缓存" not in quick_panel, "QuickPanelViewFactory must not expose symbol cache controls"
-          assert "clearCacheNow" not in quick_panel, "QuickPanelViewFactory must not call clearCacheNow"
+          for test_file in (
+              "app/src/test/java/com/scluzlep/miimeprivacy/config/PrivacyConfigV2Test.kt",
+              "app/src/test/java/com/scluzlep/miimeprivacy/ui/viewmodel/PrivacyUiViewModelTest.kt",
+          ):
+              assert pathlib.Path(test_file).is_file(), f"Missing required v2 unit test: {test_file}"
 
           lines = manifest_tree.splitlines()
           fp = None
@@ -177,7 +266,7 @@ jobs:
           assert ".archiveprovider" in fp, "FileProvider missing .archiveprovider authority"
           assert re.search(r"android:exported(?:\(0x[0-9a-f]+\))?=(?:false|\(type 0x12\)0x0)\b", fp), f"FileProvider must have exported=false:\n{fp}"
 
-          print("Verified v1.2 integration invariants")
+          print("Verified v2.0 integration invariants")
           PY
       - name: Upload PR debug APK artifact
         if: github.event_name == 'pull_request'
@@ -251,10 +340,17 @@ jobs:
             echo "MIIME_VERSION_CODE=${vcode}" >> "$GITHUB_ENV"
           }
 
-          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
+            if [[ "${TAG#v}" != "${DEFAULT_VER}" ]]; then
+              echo "::error::Release tag ${TAG} does not match app/build.gradle.kts versionName '${DEFAULT_VER}'"
+              exit 1
+            fi
             DO_RELEASE="true"
             derive_version_env "$TAG"
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "::error::Tag ref must start with refs/tags/v, got: ${GITHUB_REF}"
+            exit 1
           elif [[ -n "${INPUT_TAG}" ]]; then
             TAG="${INPUT_TAG}"
             DO_RELEASE="${INPUT_PUBLISH}"

@@ -124,7 +124,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     topBar = {
                         SmallTopAppBar(
-                            title = "米输净盾",
+                            title = "Mi IMEPlus",
                             subtitle = when (selectedTab) {
                                 MainTab.OVERVIEW -> "运行状态"
                                 MainTab.RULES -> "拦截规则"
@@ -256,7 +256,6 @@ class MainActivity : ComponentActivity() {
                 MainTab.EMOJI.name -> controller.selectTab(MainTab.EMOJI)
                 MainTab.SETTINGS.name -> controller.selectTab(MainTab.SETTINGS)
                 else -> {
-                    controller.selectRuleFilter(RuleTargetFilter.ALL)
                     controller.selectTab(MainTab.OVERVIEW)
                 }
             }

@@ -1,5 +1,8 @@
 package com.scluzlep.miimeprivacy.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.os.Build
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -10,21 +13,32 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.scluzlep.miimeprivacy.BuildConfig
 import com.scluzlep.miimeprivacy.config.MonetPaletteStyle
 import com.scluzlep.miimeprivacy.config.ThemeMode
@@ -36,12 +50,16 @@ import com.scluzlep.miimeprivacy.ui.theme.themeModeLabel
 import com.scluzlep.miimeprivacy.ui.viewmodel.PrivacyUiController
 import com.scluzlep.miimeprivacy.ui.viewmodel.PrivacyUiState
 import top.yukonga.miuix.kmp.basic.BasicComponent
+import top.yukonga.miuix.kmp.basic.Button
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
+import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Surface
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 private const val GITHUB_REPO_URL = "https://github.com/Scluzlep/miimeprivacy"
@@ -59,6 +77,11 @@ fun SettingsTab(
     val statusColors = MiThemeExtras.statusColors
     val supportsSystemMonet = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     val uriHandler = LocalUriHandler.current
+    val context = LocalContext.current
+
+    var showImportDialog by remember { mutableStateOf(false) }
+    var importText by remember { mutableStateOf("") }
+    var importError by remember { mutableStateOf("") }
 
     val lsposedVersionText = if (svc.isServiceBound) {
         val fwName = svc.frameworkName.ifBlank { "LSPosed" }
@@ -242,6 +265,84 @@ fun SettingsTab(
             }
         }
 
+        item(key = "backup_title") {
+            SmallTitle(
+                text = "配置备份与迁移",
+                insideMargin = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
+            )
+        }
+
+        item(key = "backup_card") {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                insideMargin = PaddingValues(16.dp)
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "配置格式 v${cfg.configVersion}（含 ${cfg.ruleOverrides.size} 项 rule_overrides 覆盖，支持导入 v1.x/v2.0 JSON）",
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = colors.onSurfaceVariantSummary
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                val exported = controller.exportConfigJson()
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                clipboard?.setPrimaryClip(ClipData.newPlainText("miimeprivacy_config", exported))
+                                controller.notifyFeedback("已复制 v${cfg.configVersion} 配置 JSON 到剪贴板")
+                            },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(
+                                color = colors.secondaryContainer,
+                                contentColor = colors.onSecondaryContainer
+                            )
+                        ) {
+                            Text(
+                                text = "导出 JSON",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = colors.onSecondaryContainer
+                            )
+                        }
+                        Button(
+                            onClick = {
+                                importError = ""
+                                importText = ""
+                                showImportDialog = true
+                            },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColorsPrimary()
+                        ) {
+                            Text(
+                                text = "导入 JSON",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = colors.onPrimary
+                            )
+                        }
+                    }
+
+                    if (state.actionFeedback.isNotBlank()) {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MiInnerShape,
+                            color = statusColors.infoContainer
+                        ) {
+                            Text(
+                                text = state.actionFeedback,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                style = MiuixTheme.textStyles.footnote1,
+                                color = statusColors.onInfoContainer
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         item(key = "about_title") {
             SmallTitle(
                 text = "关于",
@@ -253,7 +354,7 @@ fun SettingsTab(
             Card(modifier = Modifier.fillMaxWidth()) {
                 BasicComponent(
                     title = "软件名称",
-                    summary = "米输净盾"
+                    summary = "Mi IMEPlus"
                 )
                 HorizontalDivider(
                     modifier = Modifier.padding(horizontal = 16.dp),
@@ -294,6 +395,120 @@ fun SettingsTab(
                     title = "LSPosed 版本",
                     summary = lsposedVersionText
                 )
+            }
+        }
+    }
+
+    if (showImportDialog) {
+        Dialog(onDismissRequest = { showImportDialog = false }) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(CardDefaults.CornerRadius),
+                color = colors.surfaceContainer,
+                border = BorderStroke(0.5.dp, colors.dividerLine)
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "导入配置 JSON",
+                        style = MiuixTheme.textStyles.title4,
+                        fontWeight = FontWeight.SemiBold,
+                        color = colors.onSurfaceContainer
+                    )
+                    Text(
+                        text = "粘贴导出的配置 JSON（含 config_version 与 rule_overrides）",
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = colors.onSurfaceVariantSummary
+                    )
+
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 110.dp, max = 220.dp),
+                        shape = MiInnerShape,
+                        color = colors.surfaceVariant,
+                        border = BorderStroke(0.5.dp, colors.dividerLine)
+                    ) {
+                        Box(modifier = Modifier.padding(12.dp)) {
+                            if (importText.isEmpty()) {
+                                Text(
+                                    text = "{\"config_version\": 2, \"rule_overrides\": {...}}",
+                                    style = MiuixTheme.textStyles.footnote1,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = colors.onSurfaceVariantSummary
+                                )
+                            }
+                            BasicTextField(
+                                value = importText,
+                                onValueChange = {
+                                    importText = it
+                                    importError = ""
+                                },
+                                textStyle = MiuixTheme.textStyles.footnote1.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                    color = colors.onSurfaceContainer
+                                ),
+                                cursorBrush = SolidColor(colors.primary),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+
+                    if (importError.isNotBlank()) {
+                        Text(
+                            text = importError,
+                            style = MiuixTheme.textStyles.footnote1,
+                            color = statusColors.error
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        TextButton(
+                            text = "从剪贴板粘贴",
+                            onClick = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                val clipText = clipboard?.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
+                                if (clipText.isBlank()) {
+                                    importError = "剪贴板为空"
+                                } else {
+                                    importText = clipText
+                                    importError = ""
+                                }
+                            },
+                            insideMargin = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                        )
+                        Box(modifier = Modifier.weight(1f))
+                        TextButton(
+                            text = "取消",
+                            onClick = { showImportDialog = false },
+                            insideMargin = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                        )
+                    }
+
+                    Button(
+                        onClick = {
+                            if (controller.importConfigJson(importText)) {
+                                showImportDialog = false
+                            } else {
+                                importError = "JSON 格式无效，请检查后重试"
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColorsPrimary()
+                    ) {
+                        Text(
+                            text = "确认导入",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = colors.onPrimary
+                        )
+                    }
+                }
             }
         }
     }

@@ -82,12 +82,13 @@ object QuickPanelViewFactory {
                 if (switchCloud.isChecked != cloudEnabled) {
                     switchCloud.isChecked = cloudEnabled
                 }
-                val contextStripped = config.stripCursorContext && config.maskHostPackage
+                val contextStripped = config.areAllPackageContextRulesEnabled(target.packageName)
                 if (switchContext.isChecked != contextStripped) {
                     switchContext.isChecked = contextStripped
                 }
-                if (switchClipboard.isChecked != config.clipboardPrivacy) {
-                    switchClipboard.isChecked = config.clipboardPrivacy
+                val clipboardGuarded = config.arePackageClipboardGuardsEnabled(target.packageName)
+                if (switchClipboard.isChecked != clipboardGuarded) {
+                    switchClipboard.isChecked = clipboardGuarded
                 }
             } finally {
                 isBinding = false
@@ -165,7 +166,7 @@ object QuickPanelViewFactory {
             ellipsize = TextUtils.TruncateAt.END
         }
         val brandView = TextView(context).apply {
-            text = "米输净盾"
+            text = "Mi IMEPlus"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
             setTextColor(palette.textSecondary)
             isFocusable = false
@@ -328,7 +329,7 @@ object QuickPanelViewFactory {
             subtitle = "不上传光标前后文字与当前应用"
         ) { enabled ->
             val updated = ConfigBridge.persistConfigUpdateFromIme(context) { cfg ->
-                cfg.copy(stripCursorContext = enabled, maskHostPackage = enabled)
+                cfg.withPackageContextRules(target.packageName, enabled)
             }
             onConfigUpdated(updated)
         }
@@ -338,7 +339,7 @@ object QuickPanelViewFactory {
             subtitle = "拦截后台读取与静默记录"
         ) { enabled ->
             val updated = ConfigBridge.persistConfigUpdateFromIme(context) { cfg ->
-                cfg.copy(clipboardPrivacy = enabled)
+                cfg.withPackageClipboardGuards(target.packageName, enabled)
             }
             onConfigUpdated(updated)
         }

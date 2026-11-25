@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Bundle
 import com.scluzlep.miimeprivacy.config.ConfigContract
 import com.scluzlep.miimeprivacy.config.PrivacyConfig
+import com.scluzlep.miimeprivacy.model.HookRuleCatalog
 import com.scluzlep.miimeprivacy.model.ImeRuntimeDiagnostics
 import com.scluzlep.miimeprivacy.model.ImeTarget
 import io.github.libxposed.api.XposedInterface
@@ -106,6 +107,23 @@ object ConfigBridge {
     }
 
     fun isTargetManaged(target: ImeTarget): Boolean = current.isImeManaged(target)
+
+    fun isTargetManaged(targetPackage: String): Boolean =
+        ImeTarget.fromPackage(targetPackage)?.let { current.isImeManaged(it) } ?: false
+
+    fun isPointEnabled(targetPackage: String, ruleId: String): Boolean {
+        val cfg = current
+        val target = ImeTarget.fromPackage(targetPackage)
+        if (target != null) {
+            val spec = HookRuleCatalog.findById(ruleId)
+            if ((spec == null || !spec.isOverlayPill) && !cfg.isImeManaged(target)) {
+                return false
+            }
+        }
+        return cfg.isRuleEnabled(ruleId)
+    }
+
+    fun isRuleEnabled(ruleId: String): Boolean = current.isRuleEnabled(ruleId)
 
     fun isRuleEnabled(target: ImeTarget, selector: (PrivacyConfig) -> Boolean): Boolean {
         val cfg = current
