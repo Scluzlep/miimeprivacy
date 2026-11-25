@@ -177,11 +177,16 @@ class PrivacyUiStateTest {
     fun hookRuleCatalogCopyIsConciseAndFreeOfParentheses() {
         val rules = HookRuleCatalog.allRules()
         assertEquals(74, rules.size)
+        val forbiddenImeBrands = listOf("搜狗", "百度", "小爱", "小米")
         for (spec in rules) {
             assertTrue("Title too long (${spec.ruleId}): ${spec.title}", spec.title.length <= 12)
             assertTrue("Description too long (${spec.ruleId}): ${spec.description}", spec.description.length <= 24)
             assertFalse("Parentheses in title (${spec.ruleId})", spec.title.contains('(') || spec.title.contains('（'))
             assertFalse("Parentheses in description (${spec.ruleId})", spec.description.contains('(') || spec.description.contains('（'))
+            for (brand in forbiddenImeBrands) {
+                assertFalse("Forbidden IME brand '$brand' in title (${spec.ruleId}): ${spec.title}", spec.title.contains(brand))
+                assertFalse("Forbidden IME brand '$brand' in description (${spec.ruleId}): ${spec.description}", spec.description.contains(brand))
+            }
         }
     }
 

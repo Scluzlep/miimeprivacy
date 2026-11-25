@@ -1,6 +1,7 @@
 package com.scluzlep.miimeprivacy.xposed
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.content.pm.ApplicationInfo
 import android.util.Log
 import com.scluzlep.miimeprivacy.model.HookMatchStatus
@@ -25,7 +26,9 @@ class HookRegistry(
     val packageVersionCode: Long,
     val packageVersionName: String,
     val processName: String,
-    private val oldById: MutableMap<String, XposedInterface.HookHandle>? = null
+    private val oldById: MutableMap<String, XposedInterface.HookHandle>? = null,
+    internal val dexKitExecutorOverride: DexKitExecutor? = null,
+    internal val symbolPrefsOverride: SharedPreferences? = null
 ) {
     private val activeHandles = linkedMapOf<String, XposedInterface.HookHandle>()
     private val ruleReports = ConcurrentHashMap<String, HookRuleReport>()
@@ -423,7 +426,9 @@ class HookRegistry(
             versionCode = packageVersionCode,
             moduleNativeLibDir = moduleLibDir,
             resolveMode = cfg.resolveModeFor(target),
-            requiredCacheResetAtMs = cfg.cacheResetAtMsFor(target)
+            requiredCacheResetAtMs = cfg.cacheResetAtMsFor(target),
+            prefsOverride = symbolPrefsOverride,
+            dexKitExecutorOverride = dexKitExecutorOverride
         )
     }
 
@@ -437,7 +442,9 @@ class HookRegistry(
             versionCode = packageVersionCode,
             moduleNativeLibDir = moduleLibDir,
             resolveMode = cfg.resolveModeFor(target),
-            requiredCacheResetAtMs = cfg.cacheResetAtMsFor(target)
+            requiredCacheResetAtMs = cfg.cacheResetAtMsFor(target),
+            prefsOverride = symbolPrefsOverride,
+            dexKitExecutorOverride = dexKitExecutorOverride
         )
     }
 

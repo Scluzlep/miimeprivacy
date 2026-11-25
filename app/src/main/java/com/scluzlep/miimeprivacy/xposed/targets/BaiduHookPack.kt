@@ -11,14 +11,16 @@ import com.scluzlep.miimeprivacy.model.HookMatchStatus
 import com.scluzlep.miimeprivacy.model.HookRuleCatalog
 import com.scluzlep.miimeprivacy.model.ImeTarget
 import com.scluzlep.miimeprivacy.xposed.ConfigBridge
+import com.scluzlep.miimeprivacy.xposed.DexKitExecutor
 import com.scluzlep.miimeprivacy.xposed.HookRegistry
 import com.scluzlep.miimeprivacy.xposed.ImeHookPack
 import com.scluzlep.miimeprivacy.xposed.ImePackInstallResult
 import com.scluzlep.miimeprivacy.xposed.ResolveResult
 import com.scluzlep.miimeprivacy.xposed.ResolveSource
 import com.scluzlep.miimeprivacy.xposed.SymbolResolver
+import com.scluzlep.miimeprivacy.xposed.findClass
+import com.scluzlep.miimeprivacy.xposed.findMethod
 import org.json.JSONArray
-import org.luckypray.dexkit.DexKitBridge
 import org.luckypray.dexkit.query.matchers.MethodMatcher
 import java.io.File
 import java.lang.reflect.Array as JvmArray
@@ -3610,7 +3612,7 @@ object BaiduHookPack : ImeHookPack {
         hookId: String,
         methodCacheKey: String,
         missingRxDetail: String,
-        noinline dexKitFinder: ((DexKitBridge) -> String?)? = null,
+        noinline dexKitFinder: ((DexKitExecutor) -> String?)? = null,
         crossinline resolveRxMethod: (Class<*>) -> Method?,
         crossinline invokeRxFallback: (Method?) -> Any?
     ) {
@@ -3665,7 +3667,7 @@ object BaiduHookPack : ImeHookPack {
         targetClass: Class<*>?,
         methodCacheKey: String,
         methodName: String,
-        noinline dexKitFinder: ((DexKitBridge) -> String?)? = null,
+        noinline dexKitFinder: ((DexKitExecutor) -> String?)? = null,
         crossinline httpDnsBlocked: () -> Boolean
     ) {
         registry.hookExecutable(
@@ -3700,7 +3702,7 @@ object BaiduHookPack : ImeHookPack {
         clazz: Class<*>?,
         methodName: String,
         vararg paramTypes: Class<*>,
-        dexKitFinder: ((DexKitBridge) -> String?)? = null
+        dexKitFinder: ((DexKitExecutor) -> String?)? = null
     ): ResolveResult<Method> =
         resolver.resolveMethod(
             cacheKey = cacheKey,

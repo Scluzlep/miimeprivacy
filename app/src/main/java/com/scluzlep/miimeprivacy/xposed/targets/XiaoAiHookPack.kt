@@ -14,12 +14,12 @@ import com.scluzlep.miimeprivacy.model.HookMatchStatus
 import com.scluzlep.miimeprivacy.model.HookRuleCatalog
 import com.scluzlep.miimeprivacy.model.ImeTarget
 import com.scluzlep.miimeprivacy.xposed.ConfigBridge
+import com.scluzlep.miimeprivacy.xposed.DexKitExecutor
 import com.scluzlep.miimeprivacy.xposed.HookRegistry
 import com.scluzlep.miimeprivacy.xposed.ImeHookPack
 import com.scluzlep.miimeprivacy.xposed.ImePackInstallResult
 import com.scluzlep.miimeprivacy.xposed.ResolveResult
 import com.scluzlep.miimeprivacy.xposed.SymbolResolver
-import org.luckypray.dexkit.DexKitBridge
 import org.luckypray.dexkit.query.FindClass
 import org.luckypray.dexkit.query.FindMethod
 import org.luckypray.dexkit.query.matchers.ClassMatcher
@@ -2894,7 +2894,7 @@ object XiaoAiHookPack : ImeHookPack {
         }
     }
 
-    private fun findClassDescriptorByStrings(bridge: DexKitBridge, strings: List<String>): String? =
+    private fun findClassDescriptorByStrings(bridge: DexKitExecutor, strings: List<String>): String? =
         bridge.findClass(
             FindClass.create().matcher(ClassMatcher.create().usingStrings(strings))
         ).firstOrNull()?.descriptor

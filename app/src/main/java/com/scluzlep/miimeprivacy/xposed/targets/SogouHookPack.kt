@@ -20,6 +20,7 @@ import com.scluzlep.miimeprivacy.model.HookRuleCatalog
 import com.scluzlep.miimeprivacy.model.HookRuleReport
 import com.scluzlep.miimeprivacy.model.ImeTarget
 import com.scluzlep.miimeprivacy.xposed.ConfigBridge
+import com.scluzlep.miimeprivacy.xposed.DexKitExecutor
 import com.scluzlep.miimeprivacy.xposed.HookRegistry
 import com.scluzlep.miimeprivacy.xposed.ImeHookPack
 import com.scluzlep.miimeprivacy.xposed.ImePackInstallResult
@@ -29,7 +30,6 @@ import com.scluzlep.miimeprivacy.xposed.SymbolResolver
 import io.github.libxposed.api.XposedInterface
 import org.json.JSONArray
 import org.json.JSONObject
-import org.luckypray.dexkit.DexKitBridge
 import org.luckypray.dexkit.query.FindClass
 import org.luckypray.dexkit.query.FindMethod
 import org.luckypray.dexkit.query.enums.StringMatchType
@@ -3262,7 +3262,7 @@ object SogouHookPack : ImeHookPack {
         hookId: String,
         cacheKey: String,
         fastPath: (ClassLoader) -> Method?,
-        dexKitFinder: ((DexKitBridge) -> String?)? = null,
+        dexKitFinder: ((DexKitExecutor) -> String?)? = null,
         structuralFallback: ((ClassLoader) -> Method?)? = null,
         primary: Boolean = false,
         hooker: XposedInterface.Hooker
@@ -3367,7 +3367,7 @@ object SogouHookPack : ImeHookPack {
         }.getOrNull()
     }
 
-    private fun findClassByStrings(dk: DexKitBridge, vararg strings: String): String? {
+    private fun findClassByStrings(dk: DexKitExecutor, vararg strings: String): String? {
         return dk.findClass(
             FindClass.create()
                 .searchPackages(*SEARCH_PACKAGES)
@@ -3376,7 +3376,7 @@ object SogouHookPack : ImeHookPack {
     }
 
     private fun findMethodBy(
-        dk: DexKitBridge,
+        dk: DexKitExecutor,
         searchPackages: Array<String> = SEARCH_PACKAGES,
         returnType: String? = null,
         paramCount: Int? = null,
