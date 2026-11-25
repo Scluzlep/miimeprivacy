@@ -17,9 +17,11 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -28,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -95,12 +98,17 @@ fun SettingsTab(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
+            .padding(
+                top = contentPadding.calculateTopPadding(),
+                bottom = contentPadding.calculateBottomPadding()
+            )
+            .clipToBounds()
             .nestedScroll(scrollBehavior.nestedScrollConnection),
         contentPadding = PaddingValues(
             start = 16.dp,
             end = 16.dp,
-            top = contentPadding.calculateTopPadding() + 8.dp,
-            bottom = contentPadding.calculateBottomPadding() + 20.dp
+            top = 8.dp,
+            bottom = 20.dp
         ),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -400,7 +408,13 @@ fun SettingsTab(
     }
 
     if (showImportDialog) {
-        Dialog(onDismissRequest = { showImportDialog = false }) {
+        val dismissImportDialog = {
+            if (importError.isNotBlank()) {
+                controller.clearFeedback()
+            }
+            showImportDialog = false
+        }
+        Dialog(onDismissRequest = dismissImportDialog) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(CardDefaults.CornerRadius),
@@ -431,7 +445,11 @@ fun SettingsTab(
                         color = colors.surfaceVariant,
                         border = BorderStroke(0.5.dp, colors.dividerLine)
                     ) {
-                        Box(modifier = Modifier.padding(12.dp)) {
+                        Box(
+                            modifier = Modifier
+                                .padding(12.dp)
+                                .verticalScroll(rememberScrollState())
+                        ) {
                             if (importText.isEmpty()) {
                                 Text(
                                     text = "{\"config_version\": 2, \"rule_overrides\": {...}}",
@@ -485,7 +503,7 @@ fun SettingsTab(
                         Box(modifier = Modifier.weight(1f))
                         TextButton(
                             text = "取消",
-                            onClick = { showImportDialog = false },
+                            onClick = dismissImportDialog,
                             insideMargin = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
                         )
                     }

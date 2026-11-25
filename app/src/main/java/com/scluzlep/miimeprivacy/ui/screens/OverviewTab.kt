@@ -20,6 +20,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -63,19 +64,25 @@ fun OverviewTab(
     onChangeImeCloudOverride: (ImeTarget, CloudOverride) -> Unit,
     onChangeImeResolveMode: (ImeTarget, SymbolResolveMode) -> Unit,
     onClearImeSymbolCache: (ImeTarget) -> Unit,
-    onOpenImeDiagnostics: (ImeTarget) -> Unit
+    onOpenImeDiagnostics: (ImeTarget) -> Unit,
+    onClearFeedback: () -> Unit = {}
 ) {
     var configuringTarget by remember { mutableStateOf<ImeTarget?>(null) }
 
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
+            .padding(
+                top = contentPadding.calculateTopPadding(),
+                bottom = contentPadding.calculateBottomPadding()
+            )
+            .clipToBounds()
             .nestedScroll(scrollBehavior.nestedScrollConnection),
         contentPadding = PaddingValues(
             start = 16.dp,
             end = 16.dp,
-            top = contentPadding.calculateTopPadding() + 8.dp,
-            bottom = contentPadding.calculateBottomPadding() + 20.dp
+            top = 8.dp,
+            bottom = 20.dp
         ),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -89,6 +96,7 @@ fun OverviewTab(
         item(key = "module_status_card") {
             ModuleStatusCard(
                 state = state,
+                showActionFeedback = configuringTarget == null,
                 onRequestScope = onRequestScope,
                 onHotReload = onHotReload
             )
@@ -126,7 +134,10 @@ fun OverviewTab(
                 onSelectCloudOverride = { override ->
                     onChangeImeCloudOverride(cardModel.target, override)
                 },
-                onOpenSymbolConfig = { configuringTarget = cardModel.target },
+                onOpenSymbolConfig = {
+                    onClearFeedback()
+                    configuringTarget = cardModel.target
+                },
                 onInspectDiagnostics = { onOpenImeDiagnostics(cardModel.target) }
             )
         }
@@ -141,7 +152,10 @@ fun OverviewTab(
             feedbackText = state.actionFeedback,
             onChangeMode = { mode -> onChangeImeResolveMode(dialogModel.target, mode) },
             onClearCache = { onClearImeSymbolCache(dialogModel.target) },
-            onDismiss = { configuringTarget = null }
+            onDismiss = {
+                configuringTarget = null
+                onClearFeedback()
+            }
         )
     }
 }
@@ -149,6 +163,7 @@ fun OverviewTab(
 @Composable
 private fun ModuleStatusCard(
     state: PrivacyUiState,
+    showActionFeedback: Boolean,
     onRequestScope: () -> Unit,
     onHotReload: () -> Unit
 ) {
@@ -172,7 +187,8 @@ private fun ModuleStatusCard(
     } else {
         "本地模式"
     }
-    val feedbackText = state.actionFeedback.ifBlank {
+    val cardFeedback = if (showActionFeedback) state.actionFeedback else ""
+    val feedbackText = cardFeedback.ifBlank {
         svc.hotReloadStatusMessage.ifBlank { svc.scopeRequestMessage }
     }
     val installedTargets = state.imeCards.filter { it.installedInfo.installed }
@@ -571,7 +587,8 @@ private fun ImeTargetCard(
                     Text(
                         text = "符号解析",
                         style = MiuixTheme.textStyles.footnote1,
-                        color = colors.onSurfaceVariantSummary
+                        color = colors.onSurfaceVariantSummary,
+                        modifier = Modifier.padding(end = 8.dp)
                     )
                     Text(
                         text = "${model.cardResolveSummaryText}  设置 ›",
@@ -579,7 +596,8 @@ private fun ImeTargetCard(
                         fontWeight = FontWeight.Medium,
                         color = colors.onSurfaceContainer,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
                 }
             }

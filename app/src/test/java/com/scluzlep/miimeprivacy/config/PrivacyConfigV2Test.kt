@@ -13,23 +13,39 @@ import org.junit.Test
 class PrivacyConfigV2Test {
 
     @Test
-    fun all74CatalogRulesHaveExpectedDefaultsAndCounts() {
+    fun all80CatalogRulesHaveExpectedDefaultsAndCounts() {
         val rules = HookRuleCatalog.allRules()
-        assertEquals(74, rules.size)
-        assertEquals(30, HookRuleCatalog.rulesFor(ImeTarget.SOGOU).size)
-        assertEquals(24, HookRuleCatalog.rulesFor(ImeTarget.BAIDU).size)
-        assertEquals(20, HookRuleCatalog.rulesFor(ImeTarget.XIAOAI).size)
+        assertEquals(80, rules.size)
+        assertEquals(31, HookRuleCatalog.rulesFor(ImeTarget.SOGOU).size)
+        assertEquals(28, HookRuleCatalog.rulesFor(ImeTarget.BAIDU).size)
+        assertEquals(21, HookRuleCatalog.rulesFor(ImeTarget.XIAOAI).size)
         assertEquals(9, RuleCategory.entries.size)
 
         val expectedDefaultOff = setOf(
             HookRuleCatalog.RULE_SOGOU_CLIP_STRICT_BLOCK_LISTENER,
             HookRuleCatalog.RULE_SOGOU_NET_HTTPDNS,
+            HookRuleCatalog.RULE_SOGOU_NET_NATIVE_ENGINE_STRICT,
+            HookRuleCatalog.RULE_BAIDU_CLOUD_SPEECH_ENGINE_STRICT,
             HookRuleCatalog.RULE_BAIDU_CLIP_STRICT_BLOCK_READERS,
             HookRuleCatalog.RULE_BAIDU_SCAN_SMS_OTP_LOCAL,
             HookRuleCatalog.RULE_BAIDU_NET_HTTPDNS,
+            HookRuleCatalog.RULE_BAIDU_NET_IPTCORE_URL_RESOURCE,
+            HookRuleCatalog.RULE_BAIDU_NET_OCR_AUTH_REQUEST,
+            HookRuleCatalog.RULE_BAIDU_NET_TALOS_AND_SECONDARY_SDKS,
             HookRuleCatalog.RULE_XIAOAI_GATE_UNLOCK_DEGRADE_BYPASS,
             HookRuleCatalog.RULE_XIAOAI_CLOUD_VOICEASSIST_LAUNCH,
-            HookRuleCatalog.RULE_XIAOAI_NET_SYSTEM_CLOUD_CONTROL
+            HookRuleCatalog.RULE_XIAOAI_NET_SYSTEM_CLOUD_CONTROL,
+            HookRuleCatalog.RULE_XIAOAI_NET_SMARTENGINE_JNI_STRICT
+        )
+        val expectedInstallGated = setOf(
+            HookRuleCatalog.RULE_SOGOU_NET_HTTPDNS,
+            HookRuleCatalog.RULE_SOGOU_NET_NATIVE_ENGINE_STRICT,
+            HookRuleCatalog.RULE_BAIDU_NET_HTTPDNS,
+            HookRuleCatalog.RULE_BAIDU_NET_IPTCORE_URL_RESOURCE,
+            HookRuleCatalog.RULE_BAIDU_NET_OCR_AUTH_REQUEST,
+            HookRuleCatalog.RULE_BAIDU_CLOUD_SPEECH_ENGINE_STRICT,
+            HookRuleCatalog.RULE_BAIDU_NET_TALOS_AND_SECONDARY_SDKS,
+            HookRuleCatalog.RULE_XIAOAI_NET_SMARTENGINE_JNI_STRICT
         )
 
         val cfg = PrivacyConfig()
@@ -39,6 +55,7 @@ class PrivacyConfigV2Test {
         for (spec in rules) {
             val expectedDefault = spec.ruleId !in expectedDefaultOff
             assertEquals("Unexpected defaultEnabled for ${spec.ruleId}", expectedDefault, spec.defaultEnabled)
+            assertEquals("Unexpected installGated for ${spec.ruleId}", spec.ruleId in expectedInstallGated, spec.installGated)
             assertEquals("Unexpected isRuleEnabled for ${spec.ruleId}", expectedDefault, cfg.isRuleEnabled(spec.ruleId))
             assertEquals("Unexpected isRuleToggleChecked for ${spec.ruleId}", expectedDefault, cfg.isRuleToggleChecked(spec.ruleId))
         }

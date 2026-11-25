@@ -1,5 +1,6 @@
 package com.scluzlep.miimeprivacy.xposed.overlay
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
@@ -46,7 +47,8 @@ object QuickPanelViewFactory {
         private val switchCloud: Switch,
         private val switchContext: Switch,
         private val switchClipboard: Switch,
-        private val target: ImeTarget
+        private val target: ImeTarget,
+        val createdNightMode: Boolean
     ) {
         private var isBinding: Boolean = false
 
@@ -98,6 +100,7 @@ object QuickPanelViewFactory {
         fun isBindingState(): Boolean = isBinding
     }
 
+    @SuppressLint("ClickableViewAccessibility")
     fun create(
         context: Context,
         target: ImeTarget,
@@ -143,6 +146,7 @@ object QuickPanelViewFactory {
                 setStroke(dpInt(1f).coerceAtLeast(1), palette.cardStroke)
             }
             setOnClickListener { /* Consume clicks inside card so backdrop does not dismiss */ }
+            setOnTouchListener { _, _ -> true }
         }
 
         // Header row: IME name + close button
@@ -436,7 +440,8 @@ object QuickPanelViewFactory {
             switchCloud = switchCloud,
             switchContext = switchContext,
             switchClipboard = switchClipboard,
-            target = target
+            target = target,
+            createdNightMode = isDark
         )
 
         val snapshot = registry?.snapshotDiagnostics(

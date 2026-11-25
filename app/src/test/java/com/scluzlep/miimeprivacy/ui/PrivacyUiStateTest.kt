@@ -107,12 +107,12 @@ class PrivacyUiStateTest {
         )
 
         assertEquals(RuleHealthSeverity.HEALTHY, summary.severity)
-        assertEquals(29, summary.activeCount)
-        assertEquals(29, summary.applicableCount)
+        assertEquals(30, summary.activeCount)
+        assertEquals(30, summary.applicableCount)
         assertEquals(1, summary.skippedCount)
-        assertEquals(58L, summary.blockedCount)
+        assertEquals(60L, summary.blockedCount)
         assertFalse(summary.versionMismatch)
-        assertTrue(summary.headline.startsWith("29/29 正常"))
+        assertTrue(summary.headline.startsWith("30/30 正常"))
     }
 
     @Test
@@ -147,7 +147,7 @@ class PrivacyUiStateTest {
         assertEquals(1, criticalSummary.criticalFailedCount)
         assertTrue(criticalSummary.versionMismatch)
         assertTrue(criticalSummary.headline.contains("关键规则未命中"))
-        assertEquals("1 项关键规则未命中 · 19/20 正常", criticalSummary.headline)
+        assertEquals("1 项关键规则未命中 · 20/21 正常", criticalSummary.headline)
 
         val fallbackReports = xiaoaiRules.map { spec ->
             if (spec.ruleId == HookRuleCatalog.RULE_XIAOAI_CLIP_BACKGROUND_GUARD) {
@@ -176,7 +176,7 @@ class PrivacyUiStateTest {
     @Test
     fun hookRuleCatalogCopyIsConciseAndFreeOfParentheses() {
         val rules = HookRuleCatalog.allRules()
-        assertEquals(74, rules.size)
+        assertEquals(80, rules.size)
         val forbiddenImeBrands = listOf("搜狗", "百度", "小爱", "小米")
         for (spec in rules) {
             assertTrue("Title too long (${spec.ruleId}): ${spec.title}", spec.title.length <= 12)

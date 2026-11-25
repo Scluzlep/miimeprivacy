@@ -196,10 +196,11 @@ class BaiduHookPackTest {
         val nonOverlayRules = HookRuleCatalog.rulesFor(ImeTarget.BAIDU)
             .filterNot { it.ruleId == HookRuleCatalog.RULE_BAIDU_OVERLAY_PILL }
         assertEquals(ImeTarget.BAIDU, BaiduHookPack.target)
-        assertEquals(23, nonOverlayRules.size)
+        assertEquals(27, nonOverlayRules.size)
 
-        // Default ConfigBridge leaves optional strict HTTPDNS disabled while enabling default privacy gates.
+        // Default ConfigBridge leaves optional strict HTTPDNS and high-coupling install-gated rules disabled while enabling default privacy gates.
         assertFalse(ConfigBridge.isRuleEnabled(ImeTarget.BAIDU) { it.blockHttpDns })
+        assertFalse(ConfigBridge.isRuleEnabled(HookRuleCatalog.RULE_BAIDU_CLOUD_SPEECH_ENGINE_STRICT))
         assertTrue(ConfigBridge.isRuleEnabled(ImeTarget.BAIDU) { it.blockTelemetry })
 
         val globalDisabled = PrivacyConfig(allowCloudInput = false, baiduCloudOverride = CloudOverride.FOLLOW_GLOBAL)
@@ -355,6 +356,30 @@ class BaiduHookPackTest {
         assertTrue(source.contains("usingStrings(\"wapicon\")"))
         assertTrue(source.contains("usingStrings(\"ime_pls_files\", \".apk\")"))
         assertTrue(source.contains("name = \"isPrivacyAgreed\""))
+        assertTrue(source.contains("!Modifier.isFinal(it.modifiers)"))
+        val ch0Idx = source.indexOf("\"baidu.clip.token_upload_ch0\"")
+        assertTrue(ch0Idx >= 0)
+        val ch0Chunk = source.substring(ch0Idx, minOf(source.length, ch0Idx + 1600))
+        assertTrue(ch0Chunk.contains("blockedResult = { null }"))
+
+        // Block 01 & 02 gap coverage checks
+        assertTrue(BaiduJsonSanitizer.shouldBlockNoticeCenterSelector(0, true))
+        assertTrue(BaiduJsonSanitizer.shouldBlockNoticeCenterSelector(4, true))
+        assertTrue(BaiduJsonSanitizer.shouldBlockNoticeCenterSelector(6, true))
+        assertTrue(BaiduJsonSanitizer.shouldBlockNoticeCenterSelector(18, true))
+        assertFalse(BaiduJsonSanitizer.shouldBlockNoticeCenterSelector(19, true))
+        assertFalse(BaiduJsonSanitizer.shouldBlockNoticeCenterSelector(0, false))
+
+        // Block 09 Turbonet Baidu JSON config bdns stripping (strict JSON & QuicEngine trailing commas)
+        val quicRaw = """{  "conn": { "maintain_check_interval": 7210, },  "bdns": { "label": "vse", "force_http_dns_to_v2": true, },"ssl": {"zero_rtt_enabled": false,},}"""
+        val quicSanitized = BaiduJsonSanitizer.sanitizeTurbonetBaiduConfig(quicRaw, true)!!
+        assertFalse(quicSanitized.contains("\"bdns\""))
+        assertFalse(quicSanitized.contains("force_http_dns_to_v2"))
+        assertTrue(quicSanitized.contains("\"conn\""))
+        assertTrue(quicSanitized.contains("\"ssl\""))
+        assertEquals(quicRaw, BaiduJsonSanitizer.sanitizeTurbonetBaiduConfig(quicRaw, false))
+        assertEquals("""{"conn":{"k":1}}""", BaiduJsonSanitizer.sanitizeTurbonetBaiduConfig("""{"conn":{"k":1},"bdns":{"a":2}}""", true))
+        assertEquals("{}", BaiduJsonSanitizer.sanitizeTurbonetBaiduConfig("""{"bdns":{"a":2}}""", true))
     }
 
     private fun readBaiduHookPackSource(): String {

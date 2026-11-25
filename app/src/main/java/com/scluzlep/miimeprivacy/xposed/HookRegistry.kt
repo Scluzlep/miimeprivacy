@@ -204,11 +204,16 @@ class HookRegistry(
             }
             if (ok) {
                 installed++
+                val status = if (source == ResolveSource.STRUCTURAL_FALLBACK.name) {
+                    HookMatchStatus.FALLBACK
+                } else {
+                    HookMatchStatus.ACTIVE
+                }
                 recordSubHookOutcome(
                     ruleId = ruleId,
                     outcome = SubHookOutcome(
                         hookId = subId,
-                        status = HookMatchStatus.ACTIVE,
+                        status = status,
                         matchedMethod = SymbolResolver.formatExecutable(method),
                         source = source,
                         detail = ""
@@ -261,6 +266,7 @@ class HookRegistry(
         return true
     }
 
+    @Synchronized
     fun reportAllSkipped(reason: String, excludeRuleIds: Set<String> = emptySet()) {
         for (spec in HookRuleCatalog.rulesFor(target)) {
             if (spec.ruleId in excludeRuleIds) continue

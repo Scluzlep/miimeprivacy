@@ -283,7 +283,6 @@ class SymbolResolver(
                     val fallback = runCatching { structuralFallback(classLoader) }.getOrNull()
                     if (fallback != null) {
                         val descriptor = DexClass(fallback).toString()
-                        saveCacheDescriptor(storageKey, descriptor)
                         ResolveResult(fallback, ResolveSource.STRUCTURAL_FALLBACK, descriptor, fallback.name)
                     } else {
                         null
@@ -373,7 +372,6 @@ class SymbolResolver(
                     val fallback = runCatching { structuralFallback(classLoader) }.getOrNull()
                     if (fallback != null) {
                         val descriptor = executableToDescriptor(fallback)
-                        saveCacheDescriptor(storageKey, descriptor)
                         ResolveResult(fallback, ResolveSource.STRUCTURAL_FALLBACK, descriptor, formatExecutable(fallback))
                     } else {
                         null
@@ -454,7 +452,6 @@ class SymbolResolver(
                     val fallback = runCatching { structuralFallback(classLoader) }.getOrNull()
                     if (fallback != null) {
                         val descriptor = DexField(fallback).toString()
-                        saveCacheDescriptor(storageKey, descriptor)
                         ResolveResult(
                             fallback,
                             ResolveSource.STRUCTURAL_FALLBACK,
@@ -504,6 +501,7 @@ class SymbolResolver(
 
     companion object {
         private val nativeLoaded = AtomicBoolean(false)
+        private val cachePrefsLock = Any()
         const val KEY_APPLIED_RESET_AT_MS = "_applied_reset_at_ms"
 
         fun buildCacheKey(versionCode: Long, cacheKey: String): String {
@@ -533,18 +531,20 @@ class SymbolResolver(
             resetAtMs: Long = System.currentTimeMillis()
         ): Int {
             prefs ?: return 0
-            val keysToRemove = runCatching {
-                prefs.all.keys.filter(::isSymbolCacheEntryKey)
-            }.getOrDefault(emptyList())
-            val existingReset = runCatching { prefs.getLong(KEY_APPLIED_RESET_AT_MS, 0L) }.getOrDefault(0L)
-            val nextReset = maxOf(resetAtMs.coerceAtLeast(0L), existingReset)
-            val editor = prefs.edit()
-            for (key in keysToRemove) {
-                editor.remove(key)
+            synchronized(cachePrefsLock) {
+                val keysToRemove = runCatching {
+                    prefs.all.keys.filter(::isSymbolCacheEntryKey)
+                }.getOrDefault(emptyList())
+                val existingReset = runCatching { prefs.getLong(KEY_APPLIED_RESET_AT_MS, 0L) }.getOrDefault(0L)
+                val nextReset = maxOf(resetAtMs.coerceAtLeast(0L), existingReset)
+                val editor = prefs.edit()
+                for (key in keysToRemove) {
+                    editor.remove(key)
+                }
+                editor.putLong(KEY_APPLIED_RESET_AT_MS, nextReset)
+                editor.commit()
+                return keysToRemove.size
             }
-            editor.putLong(KEY_APPLIED_RESET_AT_MS, nextReset)
-            editor.commit()
-            return keysToRemove.size
         }
 
         fun clearCacheNow(
@@ -560,10 +560,12 @@ class SymbolResolver(
 
         fun applyPendingResetIfNeeded(prefs: SharedPreferences?, requiredResetAtMs: Long): Boolean {
             if (prefs == null || requiredResetAtMs <= 0L) return false
-            val applied = runCatching { prefs.getLong(KEY_APPLIED_RESET_AT_MS, 0L) }.getOrDefault(0L)
-            if (applied >= requiredResetAtMs) return false
-            clearCacheNow(prefs, requiredResetAtMs)
-            return true
+            synchronized(cachePrefsLock) {
+                val applied = runCatching { prefs.getLong(KEY_APPLIED_RESET_AT_MS, 0L) }.getOrDefault(0L)
+                if (applied >= requiredResetAtMs) return false
+                clearCacheNow(prefs, requiredResetAtMs)
+                return true
+            }
         }
 
         fun loadClassOrNull(className: String, classLoader: ClassLoader): Class<*>? {

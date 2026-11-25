@@ -633,8 +633,14 @@ object KeyboardQuickPillHook {
         } else {
             overlay.panelHandle?.let { handle ->
                 if (handle.rootView.parent === overlay.contentFrame) {
-                    val diag = currentDiagnostics(target, config)
-                    handle.bind(config, diag, QuickPanelViewFactory.isNightMode(service))
+                    val currentNight = QuickPanelViewFactory.isNightMode(service)
+                    if (handle.createdNightMode != currentNight) {
+                        dismissPanelForService(service)
+                        showPanelForService(service, overlay, target)
+                    } else {
+                        val diag = currentDiagnostics(target, config)
+                        handle.bind(config, diag, currentNight)
+                    }
                 }
             }
         }
@@ -710,12 +716,19 @@ object KeyboardQuickPillHook {
         val contentFrame = overlay.contentFrame
         val currentHandle = overlay.panelHandle
         val cfg = ConfigBridge.current
-        if (currentHandle != null && currentHandle.rootView.parent === contentFrame) {
+        val currentNight = QuickPanelViewFactory.isNightMode(service)
+        if (currentHandle != null &&
+            currentHandle.rootView.parent === contentFrame &&
+            currentHandle.createdNightMode == currentNight
+        ) {
             currentHandle.rootView.visibility = View.VISIBLE
-            currentHandle.bind(cfg, currentDiagnostics(target, cfg), QuickPanelViewFactory.isNightMode(service))
+            currentHandle.bind(cfg, currentDiagnostics(target, cfg), currentNight)
             currentHandle.rootView.bringToFront()
             contentFrame.requestLayout()
             return
+        }
+        if (currentHandle != null) {
+            dismissPanelForService(service)
         }
 
         removeViewsByTag(contentFrame, QuickPanelViewFactory.PANEL_TAG)

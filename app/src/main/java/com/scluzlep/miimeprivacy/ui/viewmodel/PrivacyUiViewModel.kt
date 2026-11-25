@@ -505,19 +505,45 @@ object PrivacyUiStateBuilder {
     }
 }
 
+internal fun ruleCategoryExpandKey(target: ImeTarget, category: RuleCategory): String =
+    "${target.name}:${category.name}"
+
 /**
  * UI controller bridging [XposedServiceManager] flows, on-device IME package metadata,
  * and transient tab/filter/action feedback states for the Compose screens.
  */
-class PrivacyUiController(context: Context) {
+class PrivacyUiController private constructor(
+    private val appContext: Context?,
+    initBridge: Boolean
+) {
 
-    private val appContext = context.applicationContext ?: context
+    constructor(context: Context) : this(
+        appContext = context.applicationContext ?: context,
+        initBridge = true
+    )
+
+    internal constructor() : this(
+        appContext = null,
+        initBridge = false
+    )
 
     private val _selectedTab = MutableStateFlow(MainTab.OVERVIEW)
     val selectedTab: StateFlow<MainTab> = _selectedTab.asStateFlow()
 
     private val _selectedRuleFilter = MutableStateFlow(RuleTargetFilter.ALL)
     val selectedRuleFilter: StateFlow<RuleTargetFilter> = _selectedRuleFilter.asStateFlow()
+
+    private val _rulesKeyword = MutableStateFlow("")
+    val rulesKeyword: StateFlow<String> = _rulesKeyword.asStateFlow()
+
+    private val _onlyInstallGated = MutableStateFlow(false)
+    val onlyInstallGated: StateFlow<Boolean> = _onlyInstallGated.asStateFlow()
+
+    private val _expandedRuleTargets = MutableStateFlow<Set<ImeTarget>>(emptySet())
+    val expandedRuleTargets: StateFlow<Set<ImeTarget>> = _expandedRuleTargets.asStateFlow()
+
+    private val _expandedRuleCategories = MutableStateFlow<Set<String>>(emptySet())
+    val expandedRuleCategories: StateFlow<Set<String>> = _expandedRuleCategories.asStateFlow()
 
     private val _installedImes = MutableStateFlow<Map<ImeTarget, InstalledImeInfo>>(emptyMap())
     val installedImes: StateFlow<Map<ImeTarget, InstalledImeInfo>> = _installedImes.asStateFlow()
@@ -532,11 +558,15 @@ class PrivacyUiController(context: Context) {
     val actionFeedback: StateFlow<String> = _actionFeedback.asStateFlow()
 
     init {
-        XposedServiceManager.init(appContext)
-        refreshInstalledImes()
+        if (initBridge && appContext != null) {
+            XposedServiceManager.init(appContext)
+            refreshInstalledImes()
+        }
     }
 
     fun selectTab(tab: MainTab) {
+        _actionFeedback.value = ""
+        _selectedRuleFilter.value = RuleTargetFilter.ALL
         _selectedTab.value = tab
     }
 
@@ -549,8 +579,59 @@ class PrivacyUiController(context: Context) {
     }
 
     fun openDiagnosticsFor(target: ImeTarget) {
+        _actionFeedback.value = ""
+        _rulesKeyword.value = ""
+        _onlyInstallGated.value = false
         _selectedRuleFilter.value = RuleTargetFilter.fromTarget(target)
         _selectedTab.value = MainTab.RULES
+    }
+
+    fun consumeRuleFilter() {
+        _selectedRuleFilter.value = RuleTargetFilter.ALL
+    }
+
+    fun clearFeedback() {
+        _actionFeedback.value = ""
+    }
+
+    fun updateRulesKeyword(keyword: String) {
+        _rulesKeyword.value = keyword
+    }
+
+    fun toggleOnlyInstallGated() {
+        _onlyInstallGated.value = !_onlyInstallGated.value
+    }
+
+    fun toggleRuleTargetExpanded(target: ImeTarget) {
+        val current = _expandedRuleTargets.value
+        _expandedRuleTargets.value = if (target in current) current - target else current + target
+    }
+
+    fun toggleRuleCategoryExpanded(key: String) {
+        val current = _expandedRuleCategories.value
+        _expandedRuleCategories.value = if (key in current) current - key else current + key
+    }
+
+    fun setRuleCategoriesExpanded(keys: Collection<String>, expanded: Boolean) {
+        val current = _expandedRuleCategories.value
+        _expandedRuleCategories.value = if (expanded) current + keys else current - keys.toSet()
+    }
+
+    fun collapseAllRules() {
+        _expandedRuleTargets.value = emptySet()
+        _expandedRuleCategories.value = emptySet()
+    }
+
+    fun expandDiagnosticTarget(target: ImeTarget, ruleItems: List<RuleDisplayItem>) {
+        _expandedRuleTargets.value = setOf(target)
+        val issueKeys = ruleItems.asSequence()
+            .filter {
+                it.spec.target == target &&
+                    (it.effectiveStatus == HookMatchStatus.FAILED || it.effectiveStatus == HookMatchStatus.DEGRADED)
+            }
+            .map { ruleCategoryExpandKey(target, it.spec.category) }
+            .toSet()
+        _expandedRuleCategories.value = issueKeys
     }
 
     fun refreshAll() {
@@ -559,7 +640,7 @@ class PrivacyUiController(context: Context) {
     }
 
     fun refreshInstalledImes() {
-        val pm = appContext.packageManager
+        val pm = appContext?.packageManager ?: return
         val result = linkedMapOf<ImeTarget, InstalledImeInfo>()
         for (target in ImeTarget.entries) {
             result[target] = queryPackageInfo(pm, target)

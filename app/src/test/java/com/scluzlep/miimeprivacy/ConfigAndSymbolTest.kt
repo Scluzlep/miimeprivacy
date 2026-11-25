@@ -241,14 +241,14 @@ class ConfigAndSymbolTest {
     @Test
     fun v2CatalogCountsCategoriesAndLookupHelpersMatchSpecification() {
         assertEquals(9, RuleCategory.entries.size)
-        assertEquals(74, HookRuleCatalog.allRules().size)
-        assertEquals(30, HookRuleCatalog.rulesFor(ImeTarget.SOGOU).size)
-        assertEquals(24, HookRuleCatalog.rulesFor(ImeTarget.BAIDU).size)
-        assertEquals(20, HookRuleCatalog.rulesFor(ImeTarget.XIAOAI).size)
+        assertEquals(80, HookRuleCatalog.allRules().size)
+        assertEquals(31, HookRuleCatalog.rulesFor(ImeTarget.SOGOU).size)
+        assertEquals(28, HookRuleCatalog.rulesFor(ImeTarget.BAIDU).size)
+        assertEquals(21, HookRuleCatalog.rulesFor(ImeTarget.XIAOAI).size)
 
-        assertEquals(29, HookRuleCatalog.privacyRuleIdsForPackage(ImeTarget.SOGOU.packageName).size)
-        assertEquals(23, HookRuleCatalog.privacyRuleIdsForPackage(ImeTarget.BAIDU.packageName).size)
-        assertEquals(19, HookRuleCatalog.privacyRuleIdsForPackage(ImeTarget.XIAOAI.packageName).size)
+        assertEquals(30, HookRuleCatalog.privacyRuleIdsForPackage(ImeTarget.SOGOU.packageName).size)
+        assertEquals(27, HookRuleCatalog.privacyRuleIdsForPackage(ImeTarget.BAIDU.packageName).size)
+        assertEquals(20, HookRuleCatalog.privacyRuleIdsForPackage(ImeTarget.XIAOAI.packageName).size)
 
         val overlayRules = HookRuleCatalog.allRules().filter { it.isOverlayPill }
         assertEquals(
@@ -268,12 +268,18 @@ class ConfigAndSymbolTest {
             setOf(
                 HookRuleCatalog.RULE_SOGOU_CLIP_STRICT_BLOCK_LISTENER,
                 HookRuleCatalog.RULE_SOGOU_NET_HTTPDNS,
+                HookRuleCatalog.RULE_SOGOU_NET_NATIVE_ENGINE_STRICT,
+                HookRuleCatalog.RULE_BAIDU_CLOUD_SPEECH_ENGINE_STRICT,
                 HookRuleCatalog.RULE_BAIDU_CLIP_STRICT_BLOCK_READERS,
                 HookRuleCatalog.RULE_BAIDU_SCAN_SMS_OTP_LOCAL,
                 HookRuleCatalog.RULE_BAIDU_NET_HTTPDNS,
+                HookRuleCatalog.RULE_BAIDU_NET_IPTCORE_URL_RESOURCE,
+                HookRuleCatalog.RULE_BAIDU_NET_OCR_AUTH_REQUEST,
+                HookRuleCatalog.RULE_BAIDU_NET_TALOS_AND_SECONDARY_SDKS,
                 HookRuleCatalog.RULE_XIAOAI_GATE_UNLOCK_DEGRADE_BYPASS,
                 HookRuleCatalog.RULE_XIAOAI_CLOUD_VOICEASSIST_LAUNCH,
-                HookRuleCatalog.RULE_XIAOAI_NET_SYSTEM_CLOUD_CONTROL
+                HookRuleCatalog.RULE_XIAOAI_NET_SYSTEM_CLOUD_CONTROL,
+                HookRuleCatalog.RULE_XIAOAI_NET_SMARTENGINE_JNI_STRICT
             ),
             defaultOffRules
         )
@@ -573,7 +579,7 @@ class ConfigAndSymbolTest {
             assertEquals(ResolveSource.DEXKIT, dexKitMethod.source)
             assertEquals(2, SymbolResolver.countCachedSymbols(prefs))
 
-            // StructuralFallback runs when DexKit misses, still skipping FastPath
+            // StructuralFallback runs when DexKit misses, still skipping FastPath and NOT polluting symbol cache
             val fallbackCls = resolver.resolveClass(
                 cacheKey = "sample.fallback_cls",
                 fastPathCandidates = listOf(SampleTarget::class.java.name),
@@ -581,9 +587,9 @@ class ConfigAndSymbolTest {
                 structuralFallback = { SampleTarget::class.java }
             )
             assertEquals(ResolveSource.STRUCTURAL_FALLBACK, fallbackCls.source)
-            assertEquals(3, SymbolResolver.countCachedSymbols(prefs))
+            assertEquals(2, SymbolResolver.countCachedSymbols(prefs))
 
-            // Subsequent lookups hit CACHE
+            // Subsequent lookups hit CACHE for DexKit-resolved entries
             val cachedCls = resolver.resolveClass(
                 cacheKey = "sample.dexkit_cls",
                 fastPathCandidates = listOf(SampleTarget::class.java.name),
@@ -602,11 +608,11 @@ class ConfigAndSymbolTest {
 
             // No-op when same resetAtMs already applied
             assertFalse(SymbolResolver.applyPendingResetIfNeeded(prefs, 5000L))
-            assertEquals(3, SymbolResolver.countCachedSymbols(prefs))
+            assertEquals(2, SymbolResolver.countCachedSymbols(prefs))
 
             // Clear cache removes v* entries and advances applied reset timestamp
             val removed = SymbolResolver.clearCacheNow(prefs, 9000L)
-            assertEquals(3, removed)
+            assertEquals(2, removed)
             assertEquals(0, SymbolResolver.countCachedSymbols(prefs))
             assertEquals(9000L, prefs.getLong(SymbolResolver.KEY_APPLIED_RESET_AT_MS, 0L))
         }

@@ -337,13 +337,15 @@ class SogouHookPackTest {
             .map { it.ruleId }
             .toSet()
 
-        assertEquals(29, nonOverlayIds.size)
+        assertEquals(30, nonOverlayIds.size)
         assertTrue(HookRuleCatalog.RULE_SOGOU_GATE_ALIVE_HEARTBEAT in nonOverlayIds)
         assertTrue(HookRuleCatalog.RULE_SOGOU_NET_HTTPDNS in nonOverlayIds)
+        assertTrue(HookRuleCatalog.RULE_SOGOU_NET_NATIVE_ENGINE_STRICT in nonOverlayIds)
 
-        // HTTP DNS stays disabled by default
+        // HTTP DNS and native strict engine guard stay disabled by default
         assertFalse(PrivacyConfig().blockHttpDns)
         assertFalse(PrivacyConfig().isRuleEnabled(HookRuleCatalog.RULE_SOGOU_NET_HTTPDNS))
+        assertFalse(PrivacyConfig().isRuleEnabled(HookRuleCatalog.RULE_SOGOU_NET_NATIVE_ENGINE_STRICT))
 
         val criticalIds = HookRuleCatalog.rulesFor(ImeTarget.SOGOU)
             .filter { it.critical }
@@ -510,5 +512,53 @@ class SogouHookPackTest {
         assertTrue(mgr.vCalled)
         assertFalse(FakeStaticJ2.C0)
         assertFalse(mgr.x)
+    }
+
+    class FakeVpaCursorData {
+        @JvmField var b: String = "before"
+        @JvmField var c: String = "cursor_secret"
+    }
+
+    class FakeVpaContextContainer {
+        @JvmField var c: FakeVpaCursorData? = FakeVpaCursorData()
+    }
+
+    class FakeVpaContextWrapper {
+        @JvmField var f: FakeVpaContextContainer? = FakeVpaContextContainer()
+    }
+
+    class FakeVpaBody {
+        @JvmField var e: Array<String> = arrayOf("imei_hint", "device_tag")
+        @JvmField var n: FakeVpaContextWrapper? = FakeVpaContextWrapper()
+        @JvmField var z: Any? = "dialogue_snippet"
+    }
+
+    @Test
+    fun sanitizeWangzaiVpaRequest_clearsDeviceStringsAndCursorContextOnlyWhenEnabled() {
+        val body = FakeVpaBody()
+
+        val cursorOnly = SogouPayloadSanitizer.sanitizeWangzaiVpaRequest(
+            requestBody = body,
+            stripDeviceDialogue = false,
+            stripLocation = false,
+            stripHostPackage = false,
+            stripCursorContext = true
+        )
+        assertTrue(cursorOnly.modified)
+        assertTrue("vpa.cursorContext" in cursorOnly.strippedFields)
+        assertEquals(null, body.n?.f?.c)
+        assertEquals(2, body.e.size)
+
+        val deviceOnly = SogouPayloadSanitizer.sanitizeWangzaiVpaRequest(
+            requestBody = body,
+            stripDeviceDialogue = true,
+            stripLocation = false,
+            stripHostPackage = false,
+            stripCursorContext = false
+        )
+        assertTrue(deviceOnly.modified)
+        assertTrue("vpa.deviceStrings" in deviceOnly.strippedFields)
+        assertEquals(0, body.e.size)
+        assertEquals(null, body.z)
     }
 }

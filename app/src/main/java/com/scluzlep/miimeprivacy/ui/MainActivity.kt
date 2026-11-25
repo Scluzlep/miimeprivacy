@@ -18,6 +18,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -117,7 +118,7 @@ class MainActivity : ComponentActivity() {
                 monetEnabled = config.monetEnabled,
                 paletteStyle = config.paletteStyle
             ) {
-                val scrollBehavior = MiuixScrollBehavior()
+                val scrollBehavior = key(selectedTab) { MiuixScrollBehavior() }
                 val colors = MiuixTheme.colorScheme
 
                 Scaffold(
@@ -196,7 +197,8 @@ class MainActivity : ComponentActivity() {
                             onChangeImeCloudOverride = controller::setImeCloudOverride,
                             onChangeImeResolveMode = controller::setImeResolveMode,
                             onClearImeSymbolCache = controller::clearImeSymbolCache,
-                            onOpenImeDiagnostics = controller::openDiagnosticsFor
+                            onOpenImeDiagnostics = controller::openDiagnosticsFor,
+                            onClearFeedback = controller::clearFeedback
                         )
 
                         MainTab.RULES -> RulesTab(

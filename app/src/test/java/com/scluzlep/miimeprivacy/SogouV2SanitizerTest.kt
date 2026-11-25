@@ -195,12 +195,13 @@ class SogouV2SanitizerTest {
     }
 
     @Test
-    fun `privacyConfig v2 rules include all 30 Sogou rules and default states match spec`() {
+    fun `privacyConfig v2 rules include all 31 Sogou rules and default states match spec`() {
         val sogouRules = HookRuleCatalog.rulesFor(ImeTarget.SOGOU)
-        assertEquals(30, sogouRules.size)
+        assertEquals(31, sogouRules.size)
 
         val defaultCfg = PrivacyConfig()
         assertFalse(defaultCfg.isRuleEnabled(HookRuleCatalog.RULE_SOGOU_NET_HTTPDNS))
+        assertFalse(defaultCfg.isRuleEnabled(HookRuleCatalog.RULE_SOGOU_NET_NATIVE_ENGINE_STRICT))
         assertFalse(defaultCfg.isRuleEnabled(HookRuleCatalog.RULE_SOGOU_CLIP_STRICT_BLOCK_LISTENER))
         assertTrue(defaultCfg.isRuleEnabled(HookRuleCatalog.RULE_SOGOU_CLIP_SNIFFER_AND_KOULING))
         assertTrue(defaultCfg.isRuleEnabled(HookRuleCatalog.RULE_SOGOU_CLIP_DB_HISTORY_SAVE))
@@ -209,7 +210,7 @@ class SogouV2SanitizerTest {
     }
 
     @Test
-    fun `sogouHookPack source wires all 30 canonical rules and eliminates v1 global flags`() {
+    fun `sogouHookPack source wires all 31 canonical rules and eliminates v1 global flags`() {
         val hookPackFile = listOf(
             File("src/main/java/com/scluzlep/miimeprivacy/xposed/targets/SogouHookPack.kt"),
             File("app/src/main/java/com/scluzlep/miimeprivacy/xposed/targets/SogouHookPack.kt"),
@@ -247,10 +248,11 @@ class SogouV2SanitizerTest {
             "RULE_SOGOU_SCAN_LOCATION_WIFI",
             "RULE_SOGOU_NET_DYNAMIC_DEX_AND_JS",
             "RULE_SOGOU_NET_HTTPDNS",
+            "RULE_SOGOU_NET_NATIVE_ENGINE_STRICT",
             "RULE_SOGOU_UI_DUAL_SKIN_EMOJI",
             "RULE_SOGOU_OVERLAY_PILL"
         )
-        assertEquals(30, canonicalRules.size)
+        assertEquals(31, canonicalRules.size)
         canonicalRules.forEach { constName ->
             assertTrue("Missing $constName in SogouHookPack.kt", source.contains(constName))
         }

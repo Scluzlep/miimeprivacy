@@ -45,7 +45,7 @@ class PrivacyUiViewModelTest {
             installedMap = emptyMap()
         )
 
-        assertEquals(74, state.ruleItems.size)
+        assertEquals(80, state.ruleItems.size)
         assertEquals(RuleCategory.entries.toSet(), state.ruleItems.map { it.spec.category }.toSet())
 
         val sogouHttpDns = state.ruleItems.first { it.spec.ruleId == HookRuleCatalog.RULE_SOGOU_NET_HTTPDNS }
@@ -67,14 +67,14 @@ class PrivacyUiViewModelTest {
         assertEquals(HookMatchStatus.SKIPPED, baiduSms.effectiveStatus)
 
         val sogouOverview = PrivacyUiStateBuilder.summarizeTargetRules(state, ImeTarget.SOGOU)
-        assertEquals(30, sogouOverview.totalCount)
+        assertEquals(31, sogouOverview.totalCount)
         assertEquals(28, sogouOverview.enabledCount)
         assertEquals(4L, sogouOverview.blockedCount)
         assertTrue(sogouOverview.hasOverrides)
-        assertTrue(sogouOverview.formattedSummary().startsWith("已启用 28/30 项 · 实测拦截 4 次"))
+        assertTrue(sogouOverview.formattedSummary().startsWith("已启用 28/31 项 · 实测拦截 4 次"))
 
         val xiaoaiOverview = PrivacyUiStateBuilder.summarizeTargetRules(state, ImeTarget.XIAOAI)
-        assertEquals(20, xiaoaiOverview.totalCount)
+        assertEquals(21, xiaoaiOverview.totalCount)
         assertEquals(17, xiaoaiOverview.enabledCount)
         assertFalse(xiaoaiOverview.hasOverrides)
     }
@@ -132,5 +132,92 @@ class PrivacyUiViewModelTest {
         assertEquals(RuleTargetFilter.SOGOU, RuleTargetFilter.fromTarget(ImeTarget.SOGOU))
         assertEquals(RuleTargetFilter.BAIDU, RuleTargetFilter.fromTarget(ImeTarget.BAIDU))
         assertEquals(RuleTargetFilter.XIAOAI, RuleTargetFilter.fromTarget(ImeTarget.XIAOAI))
+    }
+
+    @Test
+    fun actionFeedbackClearsOnTabSwitchDiagnosticsOpenAndClearFeedback() {
+        val controller = PrivacyUiController()
+
+        controller.notifyFeedback("已导出 v2 配置 JSON")
+        assertEquals("已导出 v2 配置 JSON", controller.actionFeedback.value)
+
+        controller.selectTab(MainTab.OVERLAY)
+        assertEquals("", controller.actionFeedback.value)
+        assertEquals(MainTab.OVERLAY, controller.selectedTab.value)
+
+        controller.notifyFeedback("已重置搜狗输入法胶囊位置")
+        controller.openDiagnosticsFor(ImeTarget.SOGOU)
+        assertEquals("", controller.actionFeedback.value)
+        assertEquals(MainTab.RULES, controller.selectedTab.value)
+        assertEquals(RuleTargetFilter.SOGOU, controller.selectedRuleFilter.value)
+
+        controller.notifyFeedback("已清除符号缓存")
+        controller.clearFeedback()
+        assertEquals("", controller.actionFeedback.value)
+    }
+
+    @Test
+    fun rulesExpandAndSearchStateSurvivesTabSwitchWhileFilterIsOneShot() {
+        val controller = PrivacyUiController()
+        val telemetryRule = HookRuleCatalog.rulesFor(ImeTarget.SOGOU)
+            .first { it.category == RuleCategory.TELEMETRY }
+        val state = PrivacyUiStateBuilder.build(
+            config = PrivacyConfig(),
+            serviceState = ServiceUiState(),
+            diagnosticsMap = mapOf(
+                ImeTarget.SOGOU to ImeRuntimeDiagnostics(
+                    target = ImeTarget.SOGOU,
+                    rules = listOf(
+                        HookRuleReport(
+                            ruleId = telemetryRule.ruleId,
+                            status = HookMatchStatus.FAILED,
+                            detail = "signature drift"
+                        )
+                    )
+                )
+            ),
+            installedMap = emptyMap()
+        )
+
+        controller.updateRulesKeyword("clipboard")
+        controller.toggleRuleTargetExpanded(ImeTarget.BAIDU)
+        val baiduClipKey = ruleCategoryExpandKey(ImeTarget.BAIDU, RuleCategory.CLIPBOARD)
+        controller.toggleRuleCategoryExpanded(baiduClipKey)
+
+        // Normal tab switches preserve keyword and expand/collapse state and keep filter at ALL
+        controller.selectTab(MainTab.OVERVIEW)
+        controller.selectTab(MainTab.RULES)
+        assertEquals("clipboard", controller.rulesKeyword.value)
+        assertEquals(setOf(ImeTarget.BAIDU), controller.expandedRuleTargets.value)
+        assertEquals(setOf(baiduClipKey), controller.expandedRuleCategories.value)
+        assertEquals(RuleTargetFilter.ALL, controller.selectedRuleFilter.value)
+
+        // One-shot diagnostic jump expands target + issue categories and consumes filter
+        controller.openDiagnosticsFor(ImeTarget.SOGOU)
+        assertEquals("", controller.rulesKeyword.value)
+        assertEquals(RuleTargetFilter.SOGOU, controller.selectedRuleFilter.value)
+
+        controller.expandDiagnosticTarget(ImeTarget.SOGOU, state.ruleItems)
+        controller.consumeRuleFilter()
+        assertEquals(RuleTargetFilter.ALL, controller.selectedRuleFilter.value)
+        assertEquals(setOf(ImeTarget.SOGOU), controller.expandedRuleTargets.value)
+        assertEquals(
+            setOf(ruleCategoryExpandKey(ImeTarget.SOGOU, RuleCategory.TELEMETRY)),
+            controller.expandedRuleCategories.value
+        )
+
+        // Returning to Rules tab later does not wipe user's manual collapses
+        controller.collapseAllRules()
+        controller.selectTab(MainTab.SETTINGS)
+        controller.selectTab(MainTab.RULES)
+        assertTrue(controller.expandedRuleTargets.value.isEmpty())
+        assertTrue(controller.expandedRuleCategories.value.isEmpty())
+
+        // Clicking "查看规则" a second time for the same IME triggers filter again cleanly
+        controller.toggleOnlyInstallGated()
+        assertTrue(controller.onlyInstallGated.value)
+        controller.openDiagnosticsFor(ImeTarget.SOGOU)
+        assertFalse(controller.onlyInstallGated.value)
+        assertEquals(RuleTargetFilter.SOGOU, controller.selectedRuleFilter.value)
     }
 }

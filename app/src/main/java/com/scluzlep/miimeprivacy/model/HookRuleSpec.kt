@@ -16,7 +16,7 @@ enum class RuleCategory {
 
 /**
  * Static specification of a privacy protection, UI enhancement, or overlay rule for one target IME.
- * Used by the module UI, ConfigBridge, and runtime diagnostics across all 74 v2.0 canonical rules.
+ * Used by the module UI, ConfigBridge, and runtime diagnostics across all 80 canonical rules.
  */
 data class HookRuleSpec(
     val ruleId: String,
@@ -27,6 +27,7 @@ data class HookRuleSpec(
     val defaultEnabled: Boolean = true,
     val isOverlayPill: Boolean = false,
     val critical: Boolean = false,
+    val installGated: Boolean = false,
     val legacySwitchKey: String? = null
 ) {
     val targetPackage: String
@@ -39,7 +40,7 @@ data class HookRuleSpec(
 object HookRuleCatalog {
 
     // -------------------------------------------------------------------------
-    // Sogou canonical v2.0 rule IDs (30)
+    // Sogou canonical rule IDs (31)
     // -------------------------------------------------------------------------
     const val RULE_SOGOU_GATE_ALIVE_HEARTBEAT = "sogou.gate.alive_heartbeat"
     const val RULE_SOGOU_GATE_PRECONSENT_GUARD = "sogou.gate.preconsent_guard"
@@ -69,11 +70,12 @@ object HookRuleCatalog {
     const val RULE_SOGOU_SCAN_LOCATION_WIFI = "sogou.scan.location_wifi"
     const val RULE_SOGOU_NET_DYNAMIC_DEX_AND_JS = "sogou.net.dynamic_dex_and_js"
     const val RULE_SOGOU_NET_HTTPDNS = "sogou.net.httpdns"
+    const val RULE_SOGOU_NET_NATIVE_ENGINE_STRICT = "sogou.net.native_engine_strict"
     const val RULE_SOGOU_UI_DUAL_SKIN_EMOJI = "sogou.ui.dual_skin_emoji"
     const val RULE_SOGOU_OVERLAY_PILL = "sogou.overlay_pill"
 
     // -------------------------------------------------------------------------
-    // Baidu canonical v2.0 rule IDs (24)
+    // Baidu canonical rule IDs (28)
     // -------------------------------------------------------------------------
     const val RULE_BAIDU_GATE_CONSENT_AND_1839 = "baidu.gate.consent_and_1839"
     const val RULE_BAIDU_GATE_NOTICENTER_LOCK = "baidu.gate.noticenter_lock"
@@ -85,6 +87,7 @@ object HookRuleCatalog {
     const val RULE_BAIDU_TELEMETRY_CRASH_DUMP = "baidu.telemetry.crash_dump"
     const val RULE_BAIDU_CLOUD_STREAM_GATE = "baidu.cloud.stream_gate"
     const val RULE_BAIDU_CLOUD_PAYLOAD_SANITIZE = "baidu.cloud.payload_sanitize"
+    const val RULE_BAIDU_CLOUD_SPEECH_ENGINE_STRICT = "baidu.cloud.speech_engine_strict"
     const val RULE_BAIDU_CONTEXT_CURSOR_AND_AI = "baidu.context.cursor_and_ai"
     const val RULE_BAIDU_CONTEXT_HOST_PACKAGE = "baidu.context.host_package"
     const val RULE_BAIDU_CLIP_TOKEN_UPLOAD_AND_JS = "baidu.clip.token_upload_and_js"
@@ -98,10 +101,13 @@ object HookRuleCatalog {
     const val RULE_BAIDU_NET_DYNAMIC_DEX_AND_JS = "baidu.net.dynamic_dex_and_js"
     const val RULE_BAIDU_NET_TLS_HARDENING = "baidu.net.tls_hardening"
     const val RULE_BAIDU_NET_HTTPDNS = "baidu.net.httpdns"
+    const val RULE_BAIDU_NET_IPTCORE_URL_RESOURCE = "baidu.net.iptcore_url_resource"
+    const val RULE_BAIDU_NET_OCR_AUTH_REQUEST = "baidu.net.ocr_auth_request"
+    const val RULE_BAIDU_NET_TALOS_AND_SECONDARY_SDKS = "baidu.net.talos_and_secondary_sdks"
     const val RULE_BAIDU_OVERLAY_PILL = "baidu.overlay_pill"
 
     // -------------------------------------------------------------------------
-    // XiaoAi canonical v2.0 rule IDs (20)
+    // XiaoAi canonical rule IDs (21)
     // -------------------------------------------------------------------------
     const val RULE_XIAOAI_GATE_CTA_FAIL_OPEN = "xiaoai.gate.cta_fail_open"
     const val RULE_XIAOAI_GATE_UNLOCK_DEGRADE_BYPASS = "xiaoai.gate.unlock_degrade_bypass"
@@ -122,6 +128,7 @@ object HookRuleCatalog {
     const val RULE_XIAOAI_CONTEXT_CURSOR_PROMPT_STRIP = "xiaoai.context.cursor_prompt_strip"
     const val RULE_XIAOAI_CLIP_BACKGROUND_GUARD = "xiaoai.clip.background_guard"
     const val RULE_XIAOAI_NET_SYSTEM_CLOUD_CONTROL = "xiaoai.net.system_cloud_control"
+    const val RULE_XIAOAI_NET_SMARTENGINE_JNI_STRICT = "xiaoai.net.smartengine_jni_strict"
     const val RULE_XIAOAI_OVERLAY_PILL = "xiaoai.overlay_pill"
 
     // -------------------------------------------------------------------------
@@ -172,7 +179,7 @@ object HookRuleCatalog {
 
     private val catalog: List<HookRuleSpec> = listOf(
         // =====================================================================
-        // Sogou (30 rules)
+        // Sogou (31 rules)
         // =====================================================================
         HookRuleSpec(
             ruleId = RULE_SOGOU_GATE_ALIVE_HEARTBEAT,
@@ -428,7 +435,18 @@ object HookRuleCatalog {
             description = "默认关闭，禁止绕过系统 DNS 直连解析",
             category = RuleCategory.DYNAMIC_AND_NET,
             defaultEnabled = false,
+            installGated = true,
             legacySwitchKey = PrivacyConfig.KEY_BLOCK_HTTP_DNS
+        ),
+        HookRuleSpec(
+            ruleId = RULE_SOGOU_NET_NATIVE_ENGINE_STRICT,
+            target = ImeTarget.SOGOU,
+            title = "原生引擎与加密严控",
+            description = "默认关闭不挂载，开启严控引擎参数与安全桥",
+            category = RuleCategory.DYNAMIC_AND_NET,
+            defaultEnabled = false,
+            installGated = true,
+            legacySwitchKey = null
         ),
         HookRuleSpec(
             ruleId = RULE_SOGOU_UI_DUAL_SKIN_EMOJI,
@@ -451,7 +469,7 @@ object HookRuleCatalog {
         ),
 
         // =====================================================================
-        // Baidu (24 rules)
+        // Baidu (28 rules)
         // =====================================================================
         HookRuleSpec(
             ruleId = RULE_BAIDU_GATE_CONSENT_AND_1839,
@@ -545,6 +563,16 @@ object HookRuleCatalog {
             defaultEnabled = true,
             critical = true,
             legacySwitchKey = PrivacyConfig.KEY_SANITIZE_CLOUD_PAYLOAD
+        ),
+        HookRuleSpec(
+            ruleId = RULE_BAIDU_CLOUD_SPEECH_ENGINE_STRICT,
+            target = ImeTarget.BAIDU,
+            title = "原生语音引擎阻断",
+            description = "默认关闭不挂载，开启将禁用在线语音听写",
+            category = RuleCategory.CLOUD_PRIVACY,
+            defaultEnabled = false,
+            installGated = true,
+            legacySwitchKey = null
         ),
         HookRuleSpec(
             ruleId = RULE_BAIDU_CONTEXT_CURSOR_AND_AI,
@@ -661,7 +689,38 @@ object HookRuleCatalog {
             description = "默认关闭，禁止绕过系统 DNS 直连解析",
             category = RuleCategory.DYNAMIC_AND_NET,
             defaultEnabled = false,
+            installGated = true,
             legacySwitchKey = PrivacyConfig.KEY_BLOCK_HTTP_DNS
+        ),
+        HookRuleSpec(
+            ruleId = RULE_BAIDU_NET_IPTCORE_URL_RESOURCE,
+            target = ImeTarget.BAIDU,
+            title = "引擎远端拉图严控",
+            description = "默认关闭不挂载，拦截打字引擎远端图片预取",
+            category = RuleCategory.DYNAMIC_AND_NET,
+            defaultEnabled = false,
+            installGated = true,
+            legacySwitchKey = null
+        ),
+        HookRuleSpec(
+            ruleId = RULE_BAIDU_NET_OCR_AUTH_REQUEST,
+            target = ImeTarget.BAIDU,
+            title = "离线识别鉴权严控",
+            description = "默认关闭不挂载，阻断手写图文识别在线鉴权",
+            category = RuleCategory.DYNAMIC_AND_NET,
+            defaultEnabled = false,
+            installGated = true,
+            legacySwitchKey = null
+        ),
+        HookRuleSpec(
+            ruleId = RULE_BAIDU_NET_TALOS_AND_SECONDARY_SDKS,
+            target = ImeTarget.BAIDU,
+            title = "卡片脚本与附属严控",
+            description = "默认关闭不挂载，严控卡片脚本与附属组件上报",
+            category = RuleCategory.DYNAMIC_AND_NET,
+            defaultEnabled = false,
+            installGated = true,
+            legacySwitchKey = null
         ),
         HookRuleSpec(
             ruleId = RULE_BAIDU_OVERLAY_PILL,
@@ -675,7 +734,7 @@ object HookRuleCatalog {
         ),
 
         // =====================================================================
-        // XiaoAi (20 rules)
+        // XiaoAi (21 rules)
         // =====================================================================
         HookRuleSpec(
             ruleId = RULE_XIAOAI_GATE_CTA_FAIL_OPEN,
@@ -850,6 +909,16 @@ object HookRuleCatalog {
             description = "默认关闭，阻止拉取远端系统级云控配置",
             category = RuleCategory.DYNAMIC_AND_NET,
             defaultEnabled = false,
+            legacySwitchKey = null
+        ),
+        HookRuleSpec(
+            ruleId = RULE_XIAOAI_NET_SMARTENGINE_JNI_STRICT,
+            target = ImeTarget.XIAOAI,
+            title = "智能引擎休眠桥锁死",
+            description = "默认关闭不挂载，锁死分词引擎休眠联网桥接",
+            category = RuleCategory.DYNAMIC_AND_NET,
+            defaultEnabled = false,
+            installGated = true,
             legacySwitchKey = null
         ),
         HookRuleSpec(

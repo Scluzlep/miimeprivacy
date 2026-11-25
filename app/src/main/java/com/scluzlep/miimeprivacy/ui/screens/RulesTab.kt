@@ -17,13 +17,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontFamily
@@ -47,6 +45,7 @@ import com.scluzlep.miimeprivacy.ui.viewmodel.TargetRuleOverview
 import com.scluzlep.miimeprivacy.ui.viewmodel.formatSourceTokenLabel
 import com.scluzlep.miimeprivacy.ui.viewmodel.parseSourceTokens
 import com.scluzlep.miimeprivacy.ui.viewmodel.pickPrimarySourceToken
+import com.scluzlep.miimeprivacy.ui.viewmodel.ruleCategoryExpandKey
 import com.scluzlep.miimeprivacy.ui.viewmodel.ruleCategoryLabel
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
@@ -68,32 +67,27 @@ fun RulesTab(
 ) {
     val colors = MiuixTheme.colorScheme
 
-    var keyword by remember { mutableStateOf("") }
-    // All 3 IME groups and all (ImeTarget, RuleCategory) groups start collapsed by default.
-    val expandedTargets = remember { mutableStateMapOf<ImeTarget, Boolean>() }
-    val expandedCategories = remember { mutableStateMapOf<String, Boolean>() }
+    val keyword by controller.rulesKeyword.collectAsState()
+    val onlyInstallGated by controller.onlyInstallGated.collectAsState()
+    val expandedTargets by controller.expandedRuleTargets.collectAsState()
+    val expandedCategories by controller.expandedRuleCategories.collectAsState()
 
     LaunchedEffect(selectedFilter) {
         val diagnosticTarget = selectedFilter.target ?: return@LaunchedEffect
-        expandedTargets.clear()
-        expandedCategories.clear()
-        expandedTargets[diagnosticTarget] = true
-        val targetItems = state.ruleItems.filter { it.spec.target == diagnosticTarget }
-        for (category in RuleCategory.entries) {
-            val hasIssue = targetItems.any {
-                it.spec.category == category &&
-                    (it.effectiveStatus == HookMatchStatus.FAILED || it.effectiveStatus == HookMatchStatus.DEGRADED)
-            }
-            if (hasIssue) {
-                expandedCategories[categoryExpandKey(diagnosticTarget, category)] = true
-            }
-        }
+        controller.expandDiagnosticTarget(diagnosticTarget, state.ruleItems)
+        controller.consumeRuleFilter()
     }
 
     val trimmedQuery = keyword.trim().lowercase()
+    val installGatedTotalCount = state.ruleItems.count { it.spec.installGated }
 
     val targetSections = ImeTarget.entries.mapNotNull { target ->
-        val allTargetRules = state.ruleItems.filter { it.spec.target == target }
+        val baseTargetRules = state.ruleItems.filter { it.spec.target == target }
+        val allTargetRules = if (onlyInstallGated) {
+            baseTargetRules.filter { it.spec.installGated }
+        } else {
+            baseTargetRules
+        }
         val filteredTargetRules = if (trimmedQuery.isEmpty()) {
             allTargetRules
         } else {
@@ -128,12 +122,17 @@ fun RulesTab(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
+            .padding(
+                top = contentPadding.calculateTopPadding(),
+                bottom = contentPadding.calculateBottomPadding()
+            )
+            .clipToBounds()
             .nestedScroll(scrollBehavior.nestedScrollConnection),
         contentPadding = PaddingValues(
             start = 16.dp,
             end = 16.dp,
-            top = contentPadding.calculateTopPadding() + 8.dp,
-            bottom = contentPadding.calculateBottomPadding() + 20.dp
+            top = 8.dp,
+            bottom = 20.dp
         ),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
@@ -168,7 +167,7 @@ fun RulesTab(
                             }
                             BasicTextField(
                                 value = keyword,
-                                onValueChange = { keyword = it },
+                                onValueChange = controller::updateRulesKeyword,
                                 singleLine = true,
                                 textStyle = MiuixTheme.textStyles.body2.copy(
                                     color = colors.onSurfaceContainer
@@ -179,7 +178,7 @@ fun RulesTab(
                         }
                         if (keyword.isNotEmpty()) {
                             Surface(
-                                onClick = { keyword = "" },
+                                onClick = { controller.updateRulesKeyword("") },
                                 shape = RoundedCornerShape(8.dp),
                                 color = colors.surfaceVariant
                             ) {
@@ -195,10 +194,25 @@ fun RulesTab(
                 }
 
                 Surface(
-                    onClick = {
-                        expandedTargets.clear()
-                        expandedCategories.clear()
-                    },
+                    onClick = { controller.toggleOnlyInstallGated() },
+                    shape = MiInnerShape,
+                    color = if (onlyInstallGated) colors.primaryContainer else colors.surfaceContainer,
+                    border = BorderStroke(
+                        0.5.dp,
+                        if (onlyInstallGated) colors.primary else colors.dividerLine
+                    )
+                ) {
+                    Text(
+                        text = "高耦合 $installGatedTotalCount",
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+                        style = MiuixTheme.textStyles.footnote1,
+                        fontWeight = FontWeight.Medium,
+                        color = if (onlyInstallGated) colors.onPrimaryContainer else colors.onSurfaceContainer
+                    )
+                }
+
+                Surface(
+                    onClick = { controller.collapseAllRules() },
                     shape = MiInnerShape,
                     color = colors.surfaceContainer,
                     border = BorderStroke(0.5.dp, colors.dividerLine)
@@ -230,10 +244,10 @@ fun RulesTab(
         } else {
             targetSections.forEach { (target, overview, groupedCategories) ->
                 val cardModel = state.imeCards.firstOrNull { it.target == target }
-                val targetExpanded = if (trimmedQuery.isNotEmpty()) {
+                val targetExpanded = if (trimmedQuery.isNotEmpty() || onlyInstallGated) {
                     true
                 } else {
-                    expandedTargets[target] == true
+                    target in expandedTargets
                 }
 
                 item(key = "ime_group_${target.name}") {
@@ -242,10 +256,7 @@ fun RulesTab(
                         overview = overview,
                         cardModel = cardModel,
                         expanded = targetExpanded,
-                        onToggle = {
-                            val next = !(expandedTargets[target] == true)
-                            expandedTargets[target] = next
-                        }
+                        onToggle = { controller.toggleRuleTargetExpanded(target) }
                     )
                 }
 
@@ -254,25 +265,25 @@ fun RulesTab(
                         ImeActionBar(
                             overview = overview,
                             allCategoriesExpanded = groupedCategories.all { (category, _) ->
-                                expandedCategories[categoryExpandKey(target, category)] == true
+                                ruleCategoryExpandKey(target, category) in expandedCategories
                             },
                             onToggleManaged = { managed -> controller.setImeManaged(target, managed) },
                             onToggleAllCategories = { expand ->
-                                for ((category, _) in groupedCategories) {
-                                    val key = categoryExpandKey(target, category)
-                                    if (expand) expandedCategories[key] = true else expandedCategories.remove(key)
+                                val keys = groupedCategories.map { (category, _) ->
+                                    ruleCategoryExpandKey(target, category)
                                 }
+                                controller.setRuleCategoriesExpanded(keys, expand)
                             },
                             onResetDefaults = { controller.resetPackageDefaults(target.packageName) }
                         )
                     }
 
                     groupedCategories.forEach { (category, itemsInCategory) ->
-                        val catKey = categoryExpandKey(target, category)
-                        val categoryExpanded = if (trimmedQuery.isNotEmpty()) {
+                        val catKey = ruleCategoryExpandKey(target, category)
+                        val categoryExpanded = if (trimmedQuery.isNotEmpty() || onlyInstallGated) {
                             true
                         } else {
-                            expandedCategories[catKey] == true
+                            catKey in expandedCategories
                         }
                         val activeInCategory = itemsInCategory.count { it.switchEnabled }
                         val blockedInCategory = itemsInCategory.sumOf { it.report?.blockedCount ?: 0L }
@@ -286,10 +297,7 @@ fun RulesTab(
                                 blockedCount = blockedInCategory,
                                 worstStatus = worstStatus,
                                 expanded = categoryExpanded,
-                                onToggle = {
-                                    val next = !(expandedCategories[catKey] == true)
-                                    if (next) expandedCategories[catKey] = true else expandedCategories.remove(catKey)
-                                }
+                                onToggle = { controller.toggleRuleCategoryExpanded(catKey) }
                             )
                         }
 
@@ -314,9 +322,6 @@ fun RulesTab(
         }
     }
 }
-
-private fun categoryExpandKey(target: ImeTarget, category: RuleCategory): String =
-    "${target.name}:${category.name}"
 
 private fun aggregateCategoryStatus(items: List<RuleDisplayItem>): HookMatchStatus {
     val statuses = items.map { it.effectiveStatus }
@@ -679,7 +684,7 @@ private fun GranularRuleCard(
                 )
                 if (!item.spec.defaultEnabled) {
                     MiStatusBadge(
-                        text = "默认关闭",
+                        text = if (item.spec.installGated) "关闭时不挂载" else "默认关闭",
                         containerColor = statusColors.neutralContainer,
                         contentColor = statusColors.onNeutralContainer
                     )

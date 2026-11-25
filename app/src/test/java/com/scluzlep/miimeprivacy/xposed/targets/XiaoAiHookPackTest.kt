@@ -15,18 +15,18 @@ import org.junit.Test
 class XiaoAiHookPackTest {
 
     @Test
-    fun targetMatchesXiaoAiAndCoversAllTwentyRules() {
+    fun targetMatchesXiaoAiAndCoversAllTwentyOneRules() {
         assertEquals(ImeTarget.XIAOAI, XiaoAiHookPack.target)
 
         val allXiaoAiRules = HookRuleCatalog.rulesFor(ImeTarget.XIAOAI)
-        assertEquals(20, allXiaoAiRules.size)
+        assertEquals(21, allXiaoAiRules.size)
 
         val nonOverlayIds = allXiaoAiRules
             .filterNot { it.ruleId == HookRuleCatalog.RULE_XIAOAI_OVERLAY_PILL }
             .map { it.ruleId }
             .toSet()
 
-        assertEquals(19, nonOverlayIds.size)
+        assertEquals(20, nonOverlayIds.size)
         assertTrue(HookRuleCatalog.RULE_XIAOAI_GATE_CTA_FAIL_OPEN in nonOverlayIds)
         assertTrue(HookRuleCatalog.RULE_XIAOAI_GATE_UNLOCK_DEGRADE_BYPASS in nonOverlayIds)
         assertTrue(HookRuleCatalog.RULE_XIAOAI_ID_ANTIHOOK_AND_SEC_REPORT in nonOverlayIds)
@@ -46,6 +46,7 @@ class XiaoAiHookPackTest {
         assertTrue(HookRuleCatalog.RULE_XIAOAI_CONTEXT_CURSOR_PROMPT_STRIP in nonOverlayIds)
         assertTrue(HookRuleCatalog.RULE_XIAOAI_CLIP_BACKGROUND_GUARD in nonOverlayIds)
         assertTrue(HookRuleCatalog.RULE_XIAOAI_NET_SYSTEM_CLOUD_CONTROL in nonOverlayIds)
+        assertTrue(HookRuleCatalog.RULE_XIAOAI_NET_SMARTENGINE_JNI_STRICT in nonOverlayIds)
     }
 
     @Test

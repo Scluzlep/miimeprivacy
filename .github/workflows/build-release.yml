@@ -117,7 +117,7 @@ jobs:
             echo "::error::Legacy xposedminversion metadata present"
             exit 1
           fi
-      - name: Verify v2.2 integration invariants
+      - name: Verify v3.0 integration invariants
         shell: bash
         env:
           GITHUB_REF: ${{ github.ref }}
@@ -159,14 +159,14 @@ jobs:
           gradle_text = pathlib.Path("app/build.gradle.kts").read_text(encoding="utf-8")
           code_match = re.search(r'MIIME_VERSION_CODE[^\n]*\?:\s*(\d+)', gradle_text)
           name_match = re.search(r'MIIME_VERSION_NAME[^\n]*\?:\s*"([^"]+)"', gradle_text)
-          assert code_match and code_match.group(1) == "2002001", f"versionCode default must be 2002001, got {code_match.group(1) if code_match else None}"
-          assert name_match and name_match.group(1) == "2.2", f"versionName default must be '2.2', got {name_match.group(1) if name_match else None}"
+          assert code_match and code_match.group(1) == "3000001", f"versionCode default must be 3000001, got {code_match.group(1) if code_match else None}"
+          assert name_match and name_match.group(1) == "3.0", f"versionName default must be '3.0', got {name_match.group(1) if name_match else None}"
           github_ref = os.environ.get("GITHUB_REF", "")
           if github_ref.startswith("refs/tags/v"):
               tag_ver = github_ref[len("refs/tags/v"):]
               assert tag_ver == name_match.group(1), f"Tag version v{tag_ver} does not match versionName '{name_match.group(1)}'"
 
-          # 3. 74-rule HookRuleCatalog invariants + matching *HookPack.kt coverage + floating panel boundary
+          # 3. 80-rule HookRuleCatalog invariants + matching *HookPack.kt coverage + floating panel boundary
           spec_text = pathlib.Path("app/src/main/java/com/scluzlep/miimeprivacy/model/HookRuleSpec.kt").read_text(encoding="utf-8")
           const_map = dict(re.findall(r'const\s+val\s+(RULE_[A-Z0-9_]+)\s*=\s*"([^"]+)"', spec_text))
           catalog_match = re.search(r'private\s+val\s+catalog:\s*List<HookRuleSpec>\s*=\s*listOf\((.*?)\)\s*private\s+val\s+byId', spec_text, re.S)
@@ -182,19 +182,19 @@ jobs:
                   rid = const_map[raw]
               catalog_rules.append((cname, rid))
 
-          assert len(catalog_rules) == 74, f"Expected 74 catalog rules, got {len(catalog_rules)}"
-          assert len({rid for _, rid in catalog_rules}) == 74, "Duplicate ruleId found in HookRuleCatalog"
+          assert len(catalog_rules) == 80, f"Expected 80 catalog rules, got {len(catalog_rules)}"
+          assert len({rid for _, rid in catalog_rules}) == 80, "Duplicate ruleId found in HookRuleCatalog"
           sogou_rules = [(c, r) for c, r in catalog_rules if r.startswith("sogou.")]
           baidu_rules = [(c, r) for c, r in catalog_rules if r.startswith("baidu.")]
           xiaoai_rules = [(c, r) for c, r in catalog_rules if r.startswith("xiaoai.")]
-          assert len(sogou_rules) == 30, f"Expected 30 sogou.* rules, got {len(sogou_rules)}"
-          assert len(baidu_rules) == 24, f"Expected 24 baidu.* rules, got {len(baidu_rules)}"
-          assert len(xiaoai_rules) == 20, f"Expected 20 xiaoai.* rules, got {len(xiaoai_rules)}"
+          assert len(sogou_rules) == 31, f"Expected 31 sogou.* rules, got {len(sogou_rules)}"
+          assert len(baidu_rules) == 28, f"Expected 28 baidu.* rules, got {len(baidu_rules)}"
+          assert len(xiaoai_rules) == 21, f"Expected 21 xiaoai.* rules, got {len(xiaoai_rules)}"
 
           titles = re.findall(r'title\s*=\s*"([^"]*)"', catalog_match.group(1))
           descriptions = re.findall(r'description\s*=\s*"([^"]*)"', catalog_match.group(1))
-          assert len(titles) == 74 and len(descriptions) == 74, (
-              f"Expected 74 titles/descriptions in catalog, got {len(titles)}/{len(descriptions)}"
+          assert len(titles) == 80 and len(descriptions) == 80, (
+              f"Expected 80 titles/descriptions in catalog, got {len(titles)}/{len(descriptions)}"
           )
           for copy_text in titles + descriptions:
               for forbidden_ime in ("搜狗", "百度", "小爱", "小米"):
@@ -285,7 +285,7 @@ jobs:
           assert ".archiveprovider" in fp, "FileProvider missing .archiveprovider authority"
           assert re.search(r"android:exported(?:\(0x[0-9a-f]+\))?=(?:false|\(type 0x12\)0x0)\b", fp), f"FileProvider must have exported=false:\n{fp}"
 
-          print("Verified v2.2 integration invariants")
+          print("Verified v3.0 integration invariants")
           PY
       - name: Upload PR debug APK artifact
         if: github.event_name == 'pull_request'

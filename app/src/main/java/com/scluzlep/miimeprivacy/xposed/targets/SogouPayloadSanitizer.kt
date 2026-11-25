@@ -70,6 +70,8 @@ object SogouPayloadSanitizer {
     private class VpaBodyFieldAccessor(clazz: Class<*>) {
         val deviceInfo: Field? = findField(clazz, "b")
         val locationInfo: Field? = findField(clazz, "c")
+        val deviceStrings: Field? = findField(clazz, "e")
+        val contextWrapper: Field? = findField(clazz, "n")
         val dialogue: Field? = findField(clazz, "z")
     }
 
@@ -79,10 +81,20 @@ object SogouPayloadSanitizer {
         val accountId: Field? = findField(clazz, "n")
     }
 
+    private class VpaContextWrapperFieldAccessor(clazz: Class<*>) {
+        val contextContainer: Field? = findField(clazz, "f")
+    }
+
+    private class VpaContextContainerFieldAccessor(clazz: Class<*>) {
+        val cursorContext: Field? = findField(clazz, "c")
+    }
+
     private val bodyAccessors = ConcurrentHashMap<Class<*>, BodyFieldAccessor>()
     private val deviceAccessors = ConcurrentHashMap<Class<*>, DeviceFieldAccessor>()
     private val vpaBodyAccessors = ConcurrentHashMap<Class<*>, VpaBodyFieldAccessor>()
     private val vpaDeviceAccessors = ConcurrentHashMap<Class<*>, VpaDeviceFieldAccessor>()
+    private val vpaContextWrapperAccessors = ConcurrentHashMap<Class<*>, VpaContextWrapperFieldAccessor>()
+    private val vpaContextContainerAccessors = ConcurrentHashMap<Class<*>, VpaContextContainerFieldAccessor>()
 
     fun sanitizeClientRequestBody(body: Any?, config: PrivacyConfig): Boolean {
         return sanitizeClientRequestBodyDetailed(body, config).modified
@@ -192,17 +204,43 @@ object SogouPayloadSanitizer {
         requestBody: Any?,
         stripDeviceDialogue: Boolean,
         stripLocation: Boolean,
-        stripHostPackage: Boolean
+        stripHostPackage: Boolean,
+        stripCursorContext: Boolean = false
     ): SanitizeReport {
         if (requestBody == null) return SanitizeReport(modified = false, strippedFields = emptySet())
         val accessor = vpaBodyAccessors.computeIfAbsent(requestBody.javaClass, ::VpaBodyFieldAccessor)
         val stripped = linkedSetOf<String>()
 
-        if (stripDeviceDialogue && clearFieldToNull(requestBody, accessor.dialogue)) {
-            stripped.add("vpa.dialogue")
+        if (stripDeviceDialogue) {
+            if (clearFieldToNull(requestBody, accessor.dialogue)) {
+                stripped.add("vpa.dialogue")
+            }
+            if (clearStringArrayField(requestBody, accessor.deviceStrings)) {
+                stripped.add("vpa.deviceStrings")
+            }
         }
         if (stripLocation && clearFieldToNull(requestBody, accessor.locationInfo)) {
             stripped.add("vpa.location")
+        }
+
+        if (stripCursorContext) {
+            val wrapperObj = runCatching { accessor.contextWrapper?.get(requestBody) }.getOrNull()
+            if (wrapperObj != null) {
+                val wrapperAccessor = vpaContextWrapperAccessors.computeIfAbsent(
+                    wrapperObj.javaClass,
+                    ::VpaContextWrapperFieldAccessor
+                )
+                val containerObj = runCatching { wrapperAccessor.contextContainer?.get(wrapperObj) }.getOrNull()
+                if (containerObj != null) {
+                    val containerAccessor = vpaContextContainerAccessors.computeIfAbsent(
+                        containerObj.javaClass,
+                        ::VpaContextContainerFieldAccessor
+                    )
+                    if (clearFieldToNull(containerObj, containerAccessor.cursorContext)) {
+                        stripped.add("vpa.cursorContext")
+                    }
+                }
+            }
         }
 
         val devObj = runCatching { accessor.deviceInfo?.get(requestBody) }.getOrNull()
@@ -346,6 +384,18 @@ object SogouPayloadSanitizer {
             val hadContent = current != null && current.isNotEmpty()
             if (current == null || current.isNotEmpty()) {
                 field.set(target, ByteArray(0))
+            }
+            hadContent
+        }.getOrDefault(false)
+    }
+
+    private fun clearStringArrayField(target: Any, field: Field?): Boolean {
+        if (field == null) return false
+        return runCatching {
+            val current = field.get(target) as? Array<*>
+            val hadContent = current != null && current.isNotEmpty()
+            if (current == null || current.isNotEmpty()) {
+                field.set(target, emptyArray<String>())
             }
             hadContent
         }.getOrDefault(false)

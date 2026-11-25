@@ -3,6 +3,7 @@ package com.scluzlep.miimeprivacy.emoji
 import android.graphics.Rect
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ImageView
 import com.scluzlep.miimeprivacy.model.HookMatchStatus
@@ -222,16 +223,52 @@ internal object SogouDualSkinPopupHook {
 
     private fun isMarked(popup: Any): Boolean = markedPopups[popup] == true
 
-    private fun restoreReusedViews(popup: Any) {
-        val values = popup.objectField("mEmojiViews") as? Array<*> ?: return
-        values.filterIsInstance<ImageView>().forEach { view ->
+    internal fun restoreReusedViews(popup: Any) {
+        val values = popup.objectFieldOrNull("mEmojiViews") as? Array<*> ?: return
+        val views = values.mapNotNull { it as? ImageView }
+        if (views.isEmpty()) return
+
+        views.forEach { view ->
             view.visibility = View.VISIBLE
             view.isEnabled = true
+            view.isSelected = false
         }
-        (popup.objectField("mLineView") as? View)?.visibility = View.VISIBLE
+        (popup.objectFieldOrNull("mLineView") as? View)?.visibility = View.VISIBLE
+
+        val paddingLeft = popup.intFieldOrNull("mLayoutPaddingLeft")
+        val imageWidth = popup.intFieldOrNull("mImageViewWidth")
+        val marginRight = popup.intFieldOrNull("mImageViewMarginRight")
+        if (paddingLeft != null && imageWidth != null && marginRight != null) {
+            val cellWidth = imageWidth + marginRight
+            values.forEachIndexed { index, rawView ->
+                val view = rawView as? ImageView ?: return@forEachIndexed
+                val params = view.layoutParams as? ViewGroup.MarginLayoutParams
+                if (params != null) {
+                    val expectedLeft = paddingLeft + index * cellWidth
+                    if (params.leftMargin != expectedLeft) {
+                        params.leftMargin = expectedLeft
+                        view.layoutParams = params
+                    }
+                }
+            }
+
+            val originalLayoutWidth = paddingLeft * 2 + views.size * cellWidth
+            popup.setFieldIfPresent("mDrawableCount", views.size)
+            popup.setFieldIfPresent("mLayoutWidth", originalLayoutWidth)
+
+            val selector = popup.objectFieldOrNull("mEmojiSelectorLayout") as? FrameLayout
+            if (selector != null) {
+                val selectorParams = selector.layoutParams
+                if (selectorParams != null && selectorParams.width != originalLayoutWidth) {
+                    selectorParams.width = originalLayoutWidth
+                    selector.layoutParams = selectorParams
+                }
+                selector.requestLayout()
+            }
+        }
     }
 
-    private fun collapseToFiveTones(
+    internal fun collapseToFiveTones(
         popup: Any,
         info: Any,
         rootBounds: Rect,
@@ -348,9 +385,14 @@ internal object SogouDualSkinPopupHook {
 
     private fun Any.objectField(name: String): Any? = findField(name).get(this)
 
+    private fun Any.objectFieldOrNull(name: String): Any? = findFieldOrNull(name)?.get(this)
+
     private fun Any.booleanField(name: String): Boolean = findField(name).getBoolean(this)
 
     private fun Any.intField(name: String): Int = findField(name).getInt(this)
+
+    private fun Any.intFieldOrNull(name: String): Int? =
+        runCatching { findFieldOrNull(name)?.getInt(this) }.getOrNull()
 
     private fun Any.floatField(name: String): Float = findField(name).getFloat(this)
 
@@ -358,7 +400,11 @@ internal object SogouDualSkinPopupHook {
         findField(name).set(this, value)
     }
 
-    private fun Any.findField(name: String): Field {
+    private fun Any.setFieldIfPresent(name: String, value: Any) {
+        runCatching { findFieldOrNull(name)?.set(this, value) }
+    }
+
+    private fun Any.findFieldOrNull(name: String): Field? {
         var type: Class<*>? = javaClass
         while (type != null) {
             runCatching { type.getDeclaredField(name) }.getOrNull()?.let { field ->
@@ -367,7 +413,11 @@ internal object SogouDualSkinPopupHook {
             }
             type = type.superclass
         }
-        error("Field $name not found in ${javaClass.name}")
+        return null
+    }
+
+    private fun Any.findField(name: String): Field {
+        return findFieldOrNull(name) ?: error("Field $name not found in ${javaClass.name}")
     }
 
     private fun findMethodSafe(target: Any, name: String, vararg args: Any): Method? {

@@ -136,6 +136,20 @@ object ConfigBridge {
         context: Context,
         updatedConfig: PrivacyConfig
     ): PrivacyConfig {
+        return commitConfigUpdateFromIme(context) { updatedConfig }
+    }
+
+    fun persistConfigUpdateFromIme(
+        context: Context,
+        transform: (PrivacyConfig) -> PrivacyConfig
+    ): PrivacyConfig {
+        return commitConfigUpdateFromIme(context, transform)
+    }
+
+    private fun commitConfigUpdateFromIme(
+        context: Context,
+        buildNext: (PrivacyConfig) -> PrivacyConfig
+    ): PrivacyConfig {
         val appCtx = context.applicationContext ?: context
         attachContext(appCtx)
 
@@ -143,10 +157,11 @@ object ConfigBridge {
         val committed: PrivacyConfig
         synchronized(lock) {
             previous = current
+            val candidate = buildNext(previous)
             val stamp = PrivacyConfig.nextTimestamp(
-                maxOf(previous.updatedAtMs, localConfig.updatedAtMs, remoteConfig.updatedAtMs, updatedConfig.updatedAtMs)
+                maxOf(previous.updatedAtMs, localConfig.updatedAtMs, remoteConfig.updatedAtMs, candidate.updatedAtMs)
             )
-            committed = updatedConfig.sanitized().copy(updatedAtMs = stamp)
+            committed = candidate.sanitized().copy(updatedAtMs = stamp)
             localConfig = committed
             current = committed
             localOverridePrefs?.let { prefs ->
@@ -181,14 +196,6 @@ object ConfigBridge {
             }
         }
         return committed
-    }
-
-    fun persistConfigUpdateFromIme(
-        context: Context,
-        transform: (PrivacyConfig) -> PrivacyConfig
-    ): PrivacyConfig {
-        val next = transform(current)
-        return persistConfigUpdateFromIme(context, next)
     }
 
     fun pushDiagnosticsFromIme(context: Context?, diagnostics: ImeRuntimeDiagnostics) {

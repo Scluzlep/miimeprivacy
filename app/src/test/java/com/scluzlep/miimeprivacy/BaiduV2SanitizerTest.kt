@@ -122,13 +122,13 @@ class BaiduV2SanitizerTest {
     }
 
     @Test
-    fun `BaiduHookPack references all 24 canonical Baidu rule IDs and removes deprecated v1 flags`() {
+    fun `BaiduHookPack references all 28 canonical Baidu rule IDs and removes deprecated v1 flags`() {
         val source = File(
             "src/main/java/com/scluzlep/miimeprivacy/xposed/targets/BaiduHookPack.kt"
         ).readText()
 
         val allRuleIds = HookRuleCatalog.rulesFor(ImeTarget.BAIDU).map { it.ruleId }
-        assertEquals(24, allRuleIds.size)
+        assertEquals(28, allRuleIds.size)
         for (ruleId in allRuleIds) {
             val constantName = "RULE_" + ruleId.uppercase().replace('.', '_')
             assertTrue("Missing $constantName ($ruleId) in BaiduHookPack.kt", source.contains(constantName))

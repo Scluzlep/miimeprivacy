@@ -81,6 +81,9 @@ object NotoArchiveCache {
             val existing = partial.length()
             if (existing > 0) connection.setRequestProperty("Range", "bytes=$existing-")
             val response = connection.responseCode
+            if (response == 416) {
+                partial.delete()
+            }
             require(response == HttpURLConnection.HTTP_OK || response == HttpURLConnection.HTTP_PARTIAL) {
                 "ZIP 下载失败 HTTP $response"
             }
@@ -114,7 +117,12 @@ object NotoArchiveCache {
                 }
             }
             status("正在校验 ZIP 目录…")
-            validate(partial)
+            try {
+                validate(partial)
+            } catch (error: Throwable) {
+                partial.delete()
+                throw error
+            }
             status("正在裁剪冗余源码，保留 PNG 与旗帜…")
             makeSlimArchive(partial, destination)
             partial.delete()

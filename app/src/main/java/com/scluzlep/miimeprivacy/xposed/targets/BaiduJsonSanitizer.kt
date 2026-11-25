@@ -168,9 +168,117 @@ object BaiduJsonSanitizer {
         blockTelemetry && prefKey == 1839
 
     /**
+     * Returns `true` for `ph0.e#c(kh0.j)` task selectors `0` (cloud config fetch),
+     * `4` (`hotspots`), `6` (cloud dispatch), and `18` (`key_server_log` upload) when
+     * `baidu.gate.noticenter_lock` is enabled.
+     */
+    fun shouldBlockNoticeCenterSelector(selector: Int, blockNoticeLock: Boolean): Boolean =
+        blockNoticeLock && (selector == 0 || selector == 4 || selector == 6 || selector == 18)
+
+    /**
      * Returns `true` only when optional strict Baidu HTTPDNS blocking is enabled.
      */
     fun shouldBlockHttpDns(blockHttpDns: Boolean): Boolean = blockHttpDns
+
+    /**
+     * Strips the top-level `"bdns"` block (e.g. `force_http_dns_to_v2`, backup HTTPDNS labels)
+     * from a Turbonet/QuicEngine JSON configuration string when [stripBdns] is enabled,
+     * tolerating QuicEngine's trailing commas without crashing.
+     */
+    fun sanitizeTurbonetBaiduConfig(raw: String?, stripBdns: Boolean): String? {
+        if (!stripBdns || raw.isNullOrBlank()) return raw
+        val n = raw.length
+        var i = skipWs(raw, 0)
+        if (i >= n || raw[i] != '{') return raw
+        i++
+        var leadingCommaPos = -1
+        while (i < n) {
+            i = skipWs(raw, i)
+            if (i >= n) return raw
+            if (raw[i] == '}') break
+            if (raw[i] == ',') {
+                leadingCommaPos = i
+                i = skipWs(raw, i + 1)
+                if (i < n && raw[i] == '}') break
+            }
+            if (i >= n || raw[i] != '"') return raw
+            val keyStart = i
+            val keyEnd = findStringEnd(raw, keyStart) ?: return raw
+            val key = raw.substring(keyStart + 1, keyEnd - 1)
+            i = skipWs(raw, keyEnd)
+            if (i >= n || raw[i] != ':') return raw
+            val valStart = skipWs(raw, i + 1)
+            val valEnd = findValueEnd(raw, valStart) ?: return raw
+            if (key == "bdns") {
+                val afterVal = skipWs(raw, valEnd)
+                val (cutStart, cutEnd) = if (afterVal < n && raw[afterVal] == ',') {
+                    keyStart to (afterVal + 1)
+                } else if (leadingCommaPos >= 0) {
+                    leadingCommaPos to valEnd
+                } else {
+                    keyStart to valEnd
+                }
+                return raw.substring(0, cutStart) + raw.substring(cutEnd)
+            }
+            leadingCommaPos = -1
+            i = valEnd
+        }
+        return raw
+    }
+
+    private fun skipWs(s: String, start: Int): Int {
+        var i = start
+        while (i < s.length && s[i].isWhitespace()) i++
+        return i
+    }
+
+    private fun findStringEnd(s: String, quoteStart: Int): Int? {
+        var i = quoteStart + 1
+        while (i < s.length) {
+            val c = s[i++]
+            if (c == '\\') {
+                if (i >= s.length) return null
+                i++
+            } else if (c == '"') {
+                return i
+            }
+        }
+        return null
+    }
+
+    private fun findValueEnd(s: String, start: Int): Int? {
+        if (start >= s.length) return null
+        return when (s[start]) {
+            '"' -> findStringEnd(s, start)
+            '{', '[' -> {
+                var depth = 0
+                var i = start
+                while (i < s.length) {
+                    when (s[i]) {
+                        '"' -> i = findStringEnd(s, i) ?: return null
+                        '{', '[' -> {
+                            depth++
+                            i++
+                        }
+                        '}', ']' -> {
+                            depth--
+                            i++
+                            if (depth == 0) return i
+                        }
+                        else -> i++
+                    }
+                }
+                null
+            }
+            else -> {
+                var i = start
+                while (i < s.length && s[i] != ',' && s[i] != '}' && s[i] != ']' && !s[i].isWhitespace()) {
+                    i++
+                }
+                if (i == start) null else i
+            }
+        }
+    }
 
     /**
      * Resolves RxJava `Observable.empty()` (`0`-arg static method `empty`) for `fg.w#b(x6.a)`

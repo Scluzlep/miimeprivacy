@@ -20,6 +20,7 @@ import io.github.libxposed.api.XposedModule
 import io.github.libxposed.api.XposedModuleInterface
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Main libxposed API 102 module entry point for `com.scluzlep.miimeprivacy`.
@@ -28,6 +29,8 @@ class MiImePrivacyModule : XposedModule() {
 
     private val targetPacksInstalled = AtomicBoolean(false)
     private val overlayInstalled = AtomicBoolean(false)
+    private val initialInstallStarted = AtomicBoolean(false)
+    private val lifecycleEpoch = AtomicInteger(0)
     private val installLock = Any()
     private val reanalyzeExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "miime-reanalyze").apply { isDaemon = true }
@@ -66,6 +69,8 @@ class MiImePrivacyModule : XposedModule() {
         if (isSystemServerProcess || !param.isFirstPackage) return
         val target = ImeTarget.fromPackage(param.packageName) ?: return
 
+        lifecycleEpoch.incrementAndGet()
+        initialInstallStarted.set(false)
         currentTarget = target
         currentClassLoader = param.classLoader
         currentAppInfo = param.applicationInfo
@@ -153,12 +158,15 @@ class MiImePrivacyModule : XposedModule() {
     }
 
     override fun onHotReloading(param: XposedModuleInterface.HotReloadingParam): Boolean {
+        lifecycleEpoch.incrementAndGet()
+        initialInstallStarted.set(false)
         configListener?.let { ConfigBridge.removeListener(it) }
         configListener = null
         ConfigBridge.detach()
         KeyboardQuickPillHook.clearOnHotReload()
         SogouDualSkinPopupHook.clearOnHotReload()
         ImeEmojiRuntimeBridge.detachOnHotReload()
+        SogouHookPack.resetCaches()
         param.setSavedInstanceState(currentTarget?.packageName)
         log(Log.INFO, TAG, "Hot reloading initiated for target=${currentTarget?.packageName}")
         return true
@@ -167,6 +175,8 @@ class MiImePrivacyModule : XposedModule() {
     override fun onHotReloaded(param: XposedModuleInterface.HotReloadedParam) {
         currentProcessName = param.processName
         if (param.isSystemServer) return
+        lifecycleEpoch.incrementAndGet()
+        initialInstallStarted.set(false)
 
         ConfigBridge.attachRemote(this)
         val app = currentApplicationByReflection()
@@ -219,66 +229,66 @@ class MiImePrivacyModule : XposedModule() {
         registry: HookRegistry
     ) {
         configListener?.let { ConfigBridge.removeListener(it) }
-        val listener: (PrivacyConfig, PrivacyConfig) -> Unit = { oldCfg, newCfg ->
+        val listener: (PrivacyConfig, PrivacyConfig) -> Unit = listener@{ oldCfg, newCfg ->
             KeyboardQuickPillHook.onConfigChanged(oldCfg, newCfg)
+            if (!initialInstallStarted.get()) return@listener
             val ctx = registry.attachedContext ?: currentApplicationByReflection()?.let { it.applicationContext ?: it }
             val modeChanged = oldCfg.resolveModeFor(target) != newCfg.resolveModeFor(target)
             val cacheResetRequested = newCfg.cacheResetAtMsFor(target) > oldCfg.cacheResetAtMsFor(target)
+            val installGatedChanged = HookRuleCatalog.rulesFor(target).any { spec ->
+                spec.installGated && oldCfg.isRuleEnabled(spec.ruleId) != newCfg.isRuleEnabled(spec.ruleId)
+            }
             val overlayRuleId = HookRuleCatalog.overlayRuleIdFor(target)
 
             if (oldCfg.isImeManaged(target) && !newCfg.isImeManaged(target)) {
                 if (cacheResetRequested && ctx != null) {
+                    val epoch = lifecycleEpoch.get()
                     reanalyzeExecutor.execute {
                         synchronized(installLock) {
+                            if (lifecycleEpoch.get() != epoch) return@execute
                             SymbolResolver.clearCacheNow(ctx, newCfg.cacheResetAtMsFor(target))
-                            registry.unhookActiveTargetHooks(keepPrefixes = setOf("lifecycle:", "overlay:", "emoji:"))
-                            targetPacksInstalled.set(false)
-                            registry.reportAllSkipped(
-                                reason = "已关闭对该输入法的隐私接管",
-                                excludeRuleIds = setOf(overlayRuleId)
-                            )
-                            registry.pushDiagnosticsNow(ctx, note = "未接管")
+                            if (ConfigBridge.isTargetManaged(target)) {
+                                reinstallTargetPacksLocked(target, ctx, classLoader, appInfo, registry, overlayRuleId)
+                            } else {
+                                unmanageTargetHooksLocked(ctx, registry, overlayRuleId)
+                            }
                         }
                     }
                 } else {
                     synchronized(installLock) {
-                        registry.unhookActiveTargetHooks(keepPrefixes = setOf("lifecycle:", "overlay:", "emoji:"))
-                        targetPacksInstalled.set(false)
-                        registry.reportAllSkipped(
-                            reason = "已关闭对该输入法的隐私接管",
-                            excludeRuleIds = setOf(overlayRuleId)
-                        )
+                        if (!ConfigBridge.isTargetManaged(target)) {
+                            unmanageTargetHooksLocked(ctx, registry, overlayRuleId)
+                        }
                     }
-                    registry.pushDiagnosticsNow(ctx, note = "未接管")
                 }
-            } else if (modeChanged || cacheResetRequested) {
+            } else if (modeChanged || cacheResetRequested || installGatedChanged) {
                 if (ctx != null) {
+                    val epoch = lifecycleEpoch.get()
                     reanalyzeExecutor.execute {
                         synchronized(installLock) {
+                            if (lifecycleEpoch.get() != epoch) return@execute
                             if (cacheResetRequested) {
                                 SymbolResolver.clearCacheNow(ctx, newCfg.cacheResetAtMsFor(target))
                             }
                             if (ConfigBridge.isTargetManaged(target)) {
-                                if (target == ImeTarget.SOGOU) {
-                                    SogouHookPack.resetCaches()
-                                }
-                                registry.unhookActiveTargetHooks(keepPrefixes = setOf("lifecycle:", "overlay:", "emoji:"))
-                                registry.resetTargetRuleReports(excludeRuleIds = setOf(overlayRuleId))
-                                targetPacksInstalled.set(false)
-                                installTargetPacksIfManaged(target, ctx, classLoader, appInfo, registry)
+                                reinstallTargetPacksLocked(target, ctx, classLoader, appInfo, registry, overlayRuleId)
                             } else {
-                                registry.reportAllSkipped(
-                                    reason = "已关闭对该输入法的隐私接管",
-                                    excludeRuleIds = setOf(overlayRuleId)
-                                )
-                                registry.pushDiagnosticsNow(ctx, note = "未接管")
+                                unmanageTargetHooksLocked(ctx, registry, overlayRuleId)
                             }
                         }
                     }
                 }
             } else if (!targetPacksInstalled.get() && newCfg.isImeManaged(target)) {
                 if (ctx != null) {
-                    installTargetPacksIfManaged(target, ctx, classLoader, appInfo, registry)
+                    val epoch = lifecycleEpoch.get()
+                    reanalyzeExecutor.execute {
+                        synchronized(installLock) {
+                            if (lifecycleEpoch.get() != epoch) return@execute
+                            if (ConfigBridge.isTargetManaged(target)) {
+                                installTargetPacksIfManaged(target, ctx, classLoader, appInfo, registry)
+                            }
+                        }
+                    }
                 }
             } else if (oldCfg.effectiveCloudEnabled(target) != newCfg.effectiveCloudEnabled(target) ||
                 oldCfg.isImeManaged(target) != newCfg.isImeManaged(target)
@@ -288,6 +298,37 @@ class MiImePrivacyModule : XposedModule() {
         }
         configListener = listener
         ConfigBridge.addListener(listener)
+    }
+
+    private fun unmanageTargetHooksLocked(
+        ctx: Context?,
+        registry: HookRegistry,
+        overlayRuleId: String
+    ) {
+        registry.unhookActiveTargetHooks(keepPrefixes = TARGET_KEEP_PREFIXES)
+        targetPacksInstalled.set(false)
+        registry.reportAllSkipped(
+            reason = "已关闭对该输入法的隐私接管",
+            excludeRuleIds = setOf(overlayRuleId)
+        )
+        registry.pushDiagnosticsNow(ctx, note = "未接管")
+    }
+
+    private fun reinstallTargetPacksLocked(
+        target: ImeTarget,
+        ctx: Context,
+        classLoader: ClassLoader,
+        appInfo: ApplicationInfo,
+        registry: HookRegistry,
+        overlayRuleId: String
+    ) {
+        if (target == ImeTarget.SOGOU) {
+            SogouHookPack.resetCaches()
+        }
+        registry.unhookActiveTargetHooks(keepPrefixes = TARGET_KEEP_PREFIXES)
+        registry.resetTargetRuleReports(excludeRuleIds = setOf(overlayRuleId))
+        targetPacksInstalled.set(false)
+        installTargetPacksIfManaged(target, ctx, classLoader, appInfo, registry)
     }
 
     private fun installOverlayIfNeeded(
@@ -320,6 +361,7 @@ class MiImePrivacyModule : XposedModule() {
         registry: HookRegistry
     ) {
         synchronized(installLock) {
+            initialInstallStarted.set(true)
             registry.attachContext(context)
             installOverlayIfNeeded(target, context, classLoader, appInfo, registry)
 
@@ -409,5 +451,6 @@ class MiImePrivacyModule : XposedModule() {
         private const val TAG = "MiImePrivacyModule"
         private const val HOOK_APP_ATTACH = "lifecycle:Application.attach"
         private const val HOOK_APP_ON_CREATE = "lifecycle:Application.onCreate"
+        private val TARGET_KEEP_PREFIXES = setOf("lifecycle:", "overlay:")
     }
 }
