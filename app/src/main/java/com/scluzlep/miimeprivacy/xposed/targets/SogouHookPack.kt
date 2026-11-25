@@ -20,18 +20,21 @@ import com.scluzlep.miimeprivacy.model.HookRuleCatalog
 import com.scluzlep.miimeprivacy.model.HookRuleReport
 import com.scluzlep.miimeprivacy.model.ImeTarget
 import com.scluzlep.miimeprivacy.xposed.ConfigBridge
+import com.scluzlep.miimeprivacy.xposed.DexKitExecutor
 import com.scluzlep.miimeprivacy.xposed.HookRegistry
 import com.scluzlep.miimeprivacy.xposed.ImeHookPack
 import com.scluzlep.miimeprivacy.xposed.ImePackInstallResult
 import com.scluzlep.miimeprivacy.xposed.ResolveResult
 import com.scluzlep.miimeprivacy.xposed.ResolveSource
 import com.scluzlep.miimeprivacy.xposed.SymbolResolver
+import com.scluzlep.miimeprivacy.xposed.findClass
+import com.scluzlep.miimeprivacy.xposed.findMethod
 import io.github.libxposed.api.XposedInterface
 import org.json.JSONArray
 import org.json.JSONObject
-import org.luckypray.dexkit.DexKitBridge
 import org.luckypray.dexkit.query.FindClass
 import org.luckypray.dexkit.query.FindMethod
+import org.luckypray.dexkit.query.enums.MatchType
 import org.luckypray.dexkit.query.enums.StringMatchType
 import org.luckypray.dexkit.query.matchers.ClassMatcher
 import org.luckypray.dexkit.query.matchers.MethodMatcher
@@ -80,7 +83,7 @@ object SogouHookPack : ImeHookPack {
 
     override val target: ImeTarget = ImeTarget.SOGOU
 
-    private val SEARCH_PACKAGES = arrayOf("com.sohu", "com.sogou", "sogou")
+    private val SEARCH_PACKAGES = arrayOf("com.sohu", "com.sogou", "sogou", "base.sogou")
     private const val DUMMY_UUID_ZERO = "0000000000000000000000000000000000000000000000000"
     private const val DUMMY_MAC = "02:00:00:00:00:00"
 
@@ -273,14 +276,29 @@ object SogouHookPack : ImeHookPack {
         cachedImeUiRefs = ImeUiRefs(classLoader)
 
         registry.createSymbolResolver(classLoader).use { resolver ->
+            val sharedDeviceMRes = lazy(LazyThreadSafetyMode.NONE) {
+                resolver.resolveClass(
+                    cacheKey = "sogou.lib.device.m",
+                    fastPathCandidates = listOf("com.sogou.lib.device.m"),
+                    dexKitFinder = { dk -> findClassByStrings(dk, "socketwrapper", "doPostBatchReport: isPrivate: %b") }
+                )
+            }
+            val sharedFlxWebViewRes = lazy(LazyThreadSafetyMode.NONE) {
+                resolver.resolveClass(
+                    cacheKey = "sogou.flx.FlxImeWebView",
+                    fastPathCandidates = listOf("com.sohu.inputmethod.flx.miniprogram.view.FlxImeWebView"),
+                    dexKitFinder = { dk -> findClassByStrings(dk, "responseClipBoardText", "responseSogouClipBoardText") }
+                )
+            }
+
             // 1. sogou.gate.*
             installAliveHeartbeatRule(resolver, registry)
             installPreconsentGuardRule(resolver, registry)
 
             // 2. sogou.id.*
             installOaidTgpaRule(resolver, registry)
-            installHardwareAndSensorIdRule(resolver, registry)
-            installAndroidIdAndUuidRule(resolver, registry)
+            installHardwareAndSensorIdRule(resolver, registry, sharedDeviceMRes)
+            installAndroidIdAndUuidRule(resolver, registry, sharedDeviceMRes)
 
             // 3. sogou.telemetry.*
             installPingbackRule(resolver, registry)
@@ -298,7 +316,7 @@ object SogouHookPack : ImeHookPack {
 
             // 5. sogou.clip.*
             installClipSnifferAndKoulingRule(resolver, registry)
-            installClipAutoTranslateAndJsRule(resolver, registry)
+            installClipAutoTranslateAndJsRule(resolver, registry, sharedFlxWebViewRes)
             installClipDbHistorySaveRule(resolver, registry)
             installClipStrictBlockListenerRule(resolver, registry)
 
@@ -309,12 +327,12 @@ object SogouHookPack : ImeHookPack {
             installLocationWifiRule(resolver, registry)
 
             // 7. sogou.net.*
-            installDynamicDexAndJsRule(resolver, registry)
+            installDynamicDexAndJsRule(resolver, registry, sharedFlxWebViewRes, sharedDeviceMRes)
             installHttpDnsRule(resolver, registry)
-        }
 
-        // 8. sogou.ui.dual_skin_emoji
-        installDualSkinEmojiRule(classLoader, registry)
+            // 8. sogou.ui.dual_skin_emoji
+            installDualSkinEmojiRule(classLoader, resolver, registry)
+        }
 
         val rules = HookRuleCatalog.rulesFor(target)
             .filterNot { it.ruleId == HookRuleCatalog.RULE_SOGOU_OVERLAY_PILL }
@@ -348,40 +366,27 @@ object SogouHookPack : ImeHookPack {
                                         .returnType("boolean")
                                 )
                             )
-                    ).firstOrNull()?.descriptor
+                    ).singleOrNull()?.descriptor
                 }
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "alive_a_c",
                 cacheKey = "sogou.alive.a#c",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(aliveARes.value, "c") },
-                dexKitFinder = { dk ->
-                    findMethodBy(
-                        dk = dk,
-                        searchPackages = arrayOf("com.sogou.alive"),
-                        returnType = "void",
-                        paramCount = 0,
-                        strings = arrayOf("alive")
-                    )
-                },
+                classResult = aliveARes,
+                methodName = "c",
+                returnType = "void",
                 primary = true,
                 hooker = voidNoOpHooker(ruleId)
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "alive_a_d",
                 cacheKey = "sogou.alive.a#d",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(aliveARes.value, "d", String::class.java) },
-                dexKitFinder = { dk ->
-                    findMethodBy(
-                        dk = dk,
-                        searchPackages = arrayOf("com.sogou.alive"),
-                        returnType = "boolean",
-                        paramTypes = arrayOf("java.lang.String"),
-                        strings = emptyArray()
-                    )
-                },
+                classResult = aliveARes,
+                methodName = "d",
+                String::class.java,
+                returnType = "boolean",
                 hooker = booleanFalseHooker(ruleId)
             )
             hookResolvedMethod(
@@ -419,12 +424,20 @@ object SogouHookPack : ImeHookPack {
                     )
                 },
                 dexKitFinder = { dk ->
-                    findMethodBy(
-                        dk = dk,
-                        searchPackages = arrayOf("com.sogou.alive"),
-                        returnType = "boolean",
-                        strings = arrayOf("special_alive")
-                    )
+                    dk.findMethod {
+                        searchPackages("com.sogou.alive.strategy")
+                        matcher {
+                            declaredClass {
+                                usingStrings(
+                                    listOf("https://api-android.shouji.sogou.com/v1/alive/special_alive"),
+                                    StringMatchType.Contains
+                                )
+                            }
+                            name("a", StringMatchType.Equals)
+                            returnType("boolean")
+                            paramCount(0)
+                        }
+                    }.singleOrNull()?.descriptor
                 },
                 hooker = booleanFalseHooker(ruleId)
             )
@@ -432,22 +445,27 @@ object SogouHookPack : ImeHookPack {
             val aliveStrategyBRes = resolver.resolveClass(
                 cacheKey = "sogou.alive.strategy.b",
                 fastPathCandidates = listOf("com.sogou.alive.strategy.b"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "AliveStrategyBean", "special_alive") }
+                dexKitFinder = { dk ->
+                    dk.findClass {
+                        searchPackages("com.sogou.alive.strategy")
+                        matcher {
+                            modifiers(Modifier.ABSTRACT, MatchType.Contains)
+                            addMethod {
+                                name("h", StringMatchType.Equals)
+                                paramCount(0)
+                                returnType("void")
+                            }
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "alive_strategy_b_h",
                 cacheKey = "sogou.alive.strategy.b#h",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(aliveStrategyBRes.value, "h") },
-                dexKitFinder = { dk ->
-                    findMethodBy(
-                        dk = dk,
-                        searchPackages = arrayOf("com.sogou.alive.strategy"),
-                        returnType = "void",
-                        paramCount = 0,
-                        strings = arrayOf("special_alive")
-                    )
-                },
+                classResult = aliveStrategyBRes,
+                methodName = "h",
+                returnType = "void",
                 hooker = voidNoOpHooker(ruleId)
             )
 
@@ -522,32 +540,56 @@ object SogouHookPack : ImeHookPack {
                         FindClass.create()
                             .searchPackages("com.sohu.inputmethod.sogou.launch")
                             .matcher(ClassMatcher.create().addInterface("com.sogou.networking.reporter.okhttp.a"))
-                    ).firstOrNull()?.descriptor
+                    ).singleOrNull()?.descriptor
                 }
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "launch_d_d_b",
                 cacheKey = "sogou.launch.d_d#b",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(launchHeadersRes.value, "b") },
+                classResult = launchHeadersRes,
+                methodName = "b",
+                returnType = "java.util.Map",
                 hooker = XposedInterface.Hooker { chain ->
                     if (!isPointEnabled(ruleId)) return@Hooker chain.proceed()
                     registry.incrementBlocked(ruleId)
                     HashMap<String, String>()
                 }
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "launch_d_d_c",
                 cacheKey = "sogou.launch.d_d#c",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(launchHeadersRes.value, "c") },
+                classResult = launchHeadersRes,
+                methodName = "c",
+                returnType = "java.lang.String",
                 hooker = emptyStringHooker(ruleId)
             )
 
             val reporterRes = resolver.resolveClass(
                 cacheKey = "sogou.networking.reporter.a",
                 fastPathCandidates = listOf("com.sogou.networking.reporter.a"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "NetworkingReporter") }
+                dexKitFinder = { dk ->
+                    dk.findClass {
+                        searchPackages("com.sogou.networking.reporter")
+                        matcher {
+                            addMethod {
+                                name("j", StringMatchType.Equals)
+                                paramTypes(
+                                    "android.content.Context",
+                                    "com.sogou.networking.f",
+                                    "com.sogou.networking.d"
+                                )
+                                returnType("void")
+                            }
+                            addMethod {
+                                name("m", StringMatchType.Equals)
+                                paramTypes("com.sogou.networking.reporter.okhttp.a")
+                                returnType("void")
+                            }
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             )
             hookResolvedMethod(
                 registry, resolver, stats, ruleId,
@@ -566,13 +608,16 @@ object SogouHookPack : ImeHookPack {
                     }
                 },
                 dexKitFinder = { dk ->
-                    findMethodBy(
-                        dk = dk,
-                        searchPackages = arrayOf("com.sogou.networking.reporter"),
-                        returnType = "void",
-                        paramCount = 3,
-                        strings = arrayOf("NetworkingReporter")
-                    )
+                    val cls = reporterRes.value ?: return@hookResolvedMethod null
+                    dk.findMethod {
+                        searchPackages("com.sogou.networking.reporter")
+                        matcher {
+                            declaredClass(cls.name, StringMatchType.Equals)
+                            name("j", StringMatchType.Equals)
+                            returnType("void")
+                            paramCount(3)
+                        }
+                    }.singleOrNull()?.descriptor
                 },
                 hooker = voidNoOpHooker(ruleId)
             )
@@ -624,7 +669,11 @@ object SogouHookPack : ImeHookPack {
         }
     }
 
-    private fun installHardwareAndSensorIdRule(resolver: SymbolResolver, registry: HookRegistry) {
+    private fun installHardwareAndSensorIdRule(
+        resolver: SymbolResolver,
+        registry: HookRegistry,
+        sharedDeviceMRes: Lazy<ResolveResult<Class<*>>>
+    ) {
         val ruleId = HookRuleCatalog.RULE_SOGOU_ID_HARDWARE_AND_SENSOR
         registry.installRuleIfEnabled(ruleId) {
             val stats = RuleStats()
@@ -665,30 +714,41 @@ object SogouHookPack : ImeHookPack {
                 )
             }
 
-            val deviceMRes = resolver.resolveClass(
-                cacheKey = "sogou.lib.device.m",
-                fastPathCandidates = listOf("com.sogou.lib.device.m"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "socketwrapper", "doPostBatchReport: isPrivate: %b") }
-            )
-            hookResolvedMethod(
+            val deviceMRes = sharedDeviceMRes.value
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "device_m_bssid",
                 cacheKey = "sogou.lib.device.m#d",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(deviceMRes.value, "d", WifiInfo::class.java) },
+                classResult = deviceMRes,
+                methodName = "d",
+                WifiInfo::class.java,
+                returnType = "java.lang.String",
                 hooker = emptyStringHooker(ruleId)
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "device_m_imei",
                 cacheKey = "sogou.lib.device.m#f",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(deviceMRes.value, "f", TelephonyManager::class.java) },
+                classResult = deviceMRes,
+                methodName = "f",
+                TelephonyManager::class.java,
+                returnType = "java.lang.String",
                 hooker = emptyStringHooker(ruleId)
             )
 
             val deviceNRes = resolver.resolveClass(
                 cacheKey = "sogou.lib.device.n",
                 fastPathCandidates = listOf("com.sogou.lib.device.n"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "310260000000000") }
+                dexKitFinder = { dk ->
+                    dk.findClass {
+                        searchPackages("com.sogou.lib.device")
+                        matcher {
+                            usingStrings(listOf("310260000000000"), StringMatchType.Contains)
+                            addMethod { name("b", StringMatchType.Equals) }
+                            addMethod { name("d", StringMatchType.Equals) }
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             )
             listOf("b", "d").forEach { mName ->
                 hookClassMethodsByName(
@@ -703,7 +763,14 @@ object SogouHookPack : ImeHookPack {
             val oemJRes = resolver.resolveClass(
                 cacheKey = "sogou.oem.util.j",
                 fastPathCandidates = listOf("com.sogou.inputmethod.oem.util.j"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "00000000000000000000") }
+                dexKitFinder = { dk ->
+                    dk.findClass {
+                        searchPackages("com.sogou.inputmethod.oem.util")
+                        matcher {
+                            usingStrings(listOf("00000000000000000000"), StringMatchType.Contains)
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             )
             listOf("c", "d", "f", "h", "j").forEach { mName ->
                 hookClassMethodsByName(
@@ -719,21 +786,24 @@ object SogouHookPack : ImeHookPack {
         }
     }
 
-    private fun installAndroidIdAndUuidRule(resolver: SymbolResolver, registry: HookRegistry) {
+    private fun installAndroidIdAndUuidRule(
+        resolver: SymbolResolver,
+        registry: HookRegistry,
+        sharedDeviceMRes: Lazy<ResolveResult<Class<*>>>
+    ) {
         val ruleId = HookRuleCatalog.RULE_SOGOU_ID_ANDROID_ID_AND_UUID
         registry.installRuleIfEnabled(ruleId) {
             val stats = RuleStats()
 
-            val deviceMRes = resolver.resolveClass(
-                cacheKey = "sogou.lib.device.m",
-                fastPathCandidates = listOf("com.sogou.lib.device.m"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "socketwrapper", "doPostBatchReport: isPrivate: %b") }
-            )
-            hookResolvedMethod(
+            val deviceMRes = sharedDeviceMRes.value
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "device_m_android_id",
                 cacheKey = "sogou.lib.device.m#c",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(deviceMRes.value, "c", ContentResolver::class.java) },
+                classResult = deviceMRes,
+                methodName = "c",
+                ContentResolver::class.java,
+                returnType = "java.lang.String",
                 primary = true,
                 hooker = emptyStringHooker(ruleId)
             )
@@ -746,18 +816,15 @@ object SogouHookPack : ImeHookPack {
                     hooker = emptyStringHooker(ruleId)
                 )
             }
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "device_m_settings_secure",
                 cacheKey = "sogou.lib.device.m#j",
-                fastPath = {
-                    SymbolResolver.findDeclaredMethodOrNull(
-                        deviceMRes.value,
-                        "j",
-                        ContentResolver::class.java,
-                        String::class.java
-                    )
-                },
+                classResult = deviceMRes,
+                methodName = "j",
+                ContentResolver::class.java,
+                String::class.java,
+                returnType = "java.lang.String",
                 hooker = XposedInterface.Hooker { chain ->
                     if (!isPointEnabled(ruleId)) return@Hooker chain.proceed()
                     val key = chain.getArg(1) as? String
@@ -800,20 +867,13 @@ object SogouHookPack : ImeHookPack {
                 fastPathCandidates = listOf("com.sogou.bu.basic.util.InfoManager"),
                 dexKitFinder = { dk -> findClassByStrings(dk, "gsm_", "cdma_") }
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "infomgr_getAndroidID",
                 cacheKey = "sogou.bu.InfoManager#getAndroidID",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(infoMgrRes.value, "getAndroidID") },
-                dexKitFinder = { dk ->
-                    findMethodBy(
-                        dk = dk,
-                        searchPackages = arrayOf("com.sogou.bu"),
-                        returnType = "java.lang.String",
-                        paramCount = 0,
-                        strings = arrayOf("android_id")
-                    )
-                },
+                classResult = infoMgrRes,
+                methodName = "getAndroidID",
+                returnType = "java.lang.String",
                 hooker = emptyStringHooker(ruleId)
             )
 
@@ -849,7 +909,19 @@ object SogouHookPack : ImeHookPack {
             val x2Res = resolver.resolveClass(
                 cacheKey = "sogou.x2",
                 fastPathCandidates = listOf("com.sohu.inputmethod.sogou.x2"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "http://instantpb.android.shouji.sogou.com/instantpb.gif") }
+                dexKitFinder = { dk ->
+                    dk.findClass {
+                        searchPackages("com.sohu.inputmethod.sogou")
+                        matcher {
+                            usingStrings(
+                                listOf("http://instantpb.android.shouji.sogou.com/instantpb.gif"),
+                                StringMatchType.Contains
+                            )
+                            addMethod { name("d", StringMatchType.Equals) }
+                            addMethod { name("m", StringMatchType.Equals) }
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             )
             listOf("d", "f", "g", "i", "j", "k", "l", "m").forEach { mName ->
                 hookClassMethodsByName(
@@ -936,7 +1008,7 @@ object SogouHookPack : ImeHookPack {
                 dexKitFinder = { dk ->
                     dk.findClass(
                         FindClass.create()
-                            .searchPackages("com.sogou.lib.whitedog")
+                            .searchPackages("com.sogou.lib.whitedog.step")
                             .matcher(
                                 ClassMatcher.create().addMethod(
                                     MethodMatcher.create().paramTypes(
@@ -946,7 +1018,7 @@ object SogouHookPack : ImeHookPack {
                                     )
                                 )
                             )
-                    ).firstOrNull()?.descriptor
+                    ).singleOrNull()?.descriptor
                 }
             )
             listOf("r", "g", "x").forEach { mName ->
@@ -964,15 +1036,19 @@ object SogouHookPack : ImeHookPack {
                 cacheKey = "sogou.whitedog.uploader.k",
                 fastPathCandidates = listOf("com.sohu.inputmethod.settings.internet.k"),
                 dexKitFinder = { dk ->
-                    dk.findClass(
-                        FindClass.create()
-                            .searchPackages("com.sohu.inputmethod.settings.internet")
-                            .matcher(
-                                ClassMatcher.create()
-                                    .superClass("com.sogou.threadpool.net.a")
-                                    .addMethod(MethodMatcher.create().name("onWorkFinishCallBack"))
-                            )
-                    ).firstOrNull()?.descriptor
+                    dk.findClass {
+                        searchPackages("com.sohu.inputmethod.settings.internet")
+                        matcher {
+                            superClass("com.sogou.threadpool.net.a")
+                            addMethod {
+                                name("onWork", StringMatchType.Equals)
+                                addInvoke {
+                                    declaredClass("com.sohu.inputmethod.internet.InternetConnection", StringMatchType.Equals)
+                                    name("A0", StringMatchType.Equals)
+                                }
+                            }
+                        }
+                    }.singleOrNull()?.descriptor
                 }
             )
             hookClassMethodsByName(
@@ -991,7 +1067,7 @@ object SogouHookPack : ImeHookPack {
                         FindClass.create()
                             .searchPackages("com.sogou.imskit.feature.lib.log")
                             .matcher(ClassMatcher.create().addMethod(MethodMatcher.create().name("onStartInputView")))
-                    ).firstOrNull()?.descriptor
+                    ).singleOrNull()?.descriptor
                 }
             )
             listOf("onStartInput", "onStartInputView").forEach { mName ->
@@ -1010,26 +1086,26 @@ object SogouHookPack : ImeHookPack {
                 fastPathCandidates = listOf("com.sogou.imskit.feature.lib.log.f"),
                 dexKitFinder = { dk -> findClassByStrings(dk, "用户反馈上报") }
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "imskit_log_f_c",
                 cacheKey = "sogou.imskit.log.f#c",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(logFRes.value, "c", Boolean::class.javaPrimitiveType!!) },
+                classResult = logFRes,
+                methodName = "c",
+                Boolean::class.javaPrimitiveType!!,
+                returnType = "void",
                 hooker = voidNoOpHooker(ruleId)
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "imskit_log_f_g",
                 cacheKey = "sogou.imskit.log.f#g",
-                fastPath = {
-                    SymbolResolver.findDeclaredMethodOrNull(
-                        logFRes.value,
-                        "g",
-                        Long::class.javaPrimitiveType!!,
-                        Long::class.javaPrimitiveType!!,
-                        String::class.java
-                    )
-                },
+                classResult = logFRes,
+                methodName = "g",
+                Long::class.javaPrimitiveType!!,
+                Long::class.javaPrimitiveType!!,
+                String::class.java,
+                returnType = "void",
                 hooker = voidNoOpHooker(ruleId)
             )
 
@@ -1037,11 +1113,16 @@ object SogouHookPack : ImeHookPack {
                 cacheKey = "sogou.imskit.LogInitServiceImpl_a",
                 fastPathCandidates = listOf("com.sogou.imskit.feature.lib.log.initservice.LogInitServiceImpl\$a"),
                 dexKitFinder = { dk ->
-                    dk.findClass(
-                        FindClass.create()
-                            .searchPackages("com.sogou.imskit.feature.lib.log")
-                            .matcher(ClassMatcher.create().usingStrings(listOf("Networking_monitor.db", "input_flow_log.db"), StringMatchType.Contains))
-                    ).firstOrNull()?.descriptor
+                    dk.findClass {
+                        searchPackages("com.sogou.imskit.feature.lib.log.initservice")
+                        matcher {
+                            addMethod {
+                                name("a", StringMatchType.Equals)
+                                paramCount(0)
+                                returnType("void")
+                            }
+                        }
+                    }.singleOrNull()?.descriptor
                 }
             )
             hookClassMethodsByName(
@@ -1055,7 +1136,17 @@ object SogouHookPack : ImeHookPack {
             val bigDataUploaderRes = resolver.resolveClass(
                 cacheKey = "sogou.bigdata.internet.a",
                 fastPathCandidates = listOf("com.sohu.inputmethod.sogou.bigdata.internet.a"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "app_info_count", "app_info_time") }
+                dexKitFinder = { dk ->
+                    dk.findClass {
+                        searchPackages("com.sohu.inputmethod.sogou.bigdata.internet")
+                        matcher {
+                            addMethod { name("g", StringMatchType.Equals) }
+                            addMethod { name("i", StringMatchType.Equals) }
+                            addMethod { name("j", StringMatchType.Equals) }
+                            addMethod { name("k", StringMatchType.Equals) }
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             )
             listOf("g", "i", "j", "k").forEach { mName ->
                 hookClassMethodsByName(
@@ -1080,14 +1171,24 @@ object SogouHookPack : ImeHookPack {
                 cacheKey = "sogou.beaconbridge.c",
                 fastPathCandidates = listOf("com.sohu.inputmethod.beaconbridge.c"),
                 dexKitFinder = { dk ->
-                    dk.findClass(
-                        FindClass.create()
-                            .searchPackages("com.sohu.inputmethod.beaconbridge")
-                            .matcher(ClassMatcher.create().addMethod(MethodMatcher.create().name("updateScookie")))
-                    ).firstOrNull()?.descriptor
+                    dk.findClass {
+                        searchPackages("com.sohu.inputmethod.beaconbridge")
+                        matcher {
+                            addMethod {
+                                name("e", StringMatchType.Equals)
+                                paramCount(0)
+                                returnType("void")
+                            }
+                            addMethod {
+                                name("f", StringMatchType.Equals)
+                                paramCount(0)
+                                returnType("void")
+                            }
+                        }
+                    }.singleOrNull()?.descriptor
                 }
             )
-            listOf("e", "f", "updateScookie").forEach { mName ->
+            listOf("e", "f").forEach { mName ->
                 hookClassMethodsByName(
                     registry, stats, ruleId,
                     hookIdPrefix = "beaconbridge_$mName",
@@ -1097,11 +1198,45 @@ object SogouHookPack : ImeHookPack {
                     hooker = voidNoOpHooker(ruleId)
                 )
             }
+            val beaconBridgeARes = resolver.resolveClass(
+                cacheKey = "sogou.beaconbridge.c_a",
+                fastPathCandidates = listOf("com.sohu.inputmethod.beaconbridge.c\$a"),
+                dexKitFinder = { dk ->
+                    dk.findClass {
+                        searchPackages("com.sohu.inputmethod.beaconbridge")
+                        matcher {
+                            addMethod {
+                                name("updateScookie", StringMatchType.Equals)
+                                paramCount(0)
+                                returnType("void")
+                            }
+                        }
+                    }.singleOrNull()?.descriptor
+                }
+            )
+            hookClassMethodsByName(
+                registry, stats, ruleId,
+                hookIdPrefix = "beaconbridge_updateScookie",
+                classResult = beaconBridgeARes,
+                methodName = "updateScookie",
+                hooker = voidNoOpHooker(ruleId)
+            )
 
             val beaconDRes = resolver.resolveClass(
                 cacheKey = "sogou.beacon.d",
                 fastPathCandidates = listOf("com.sogou.inputmethod.beacon.d"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "beaconManager", "eventName") }
+                dexKitFinder = { dk ->
+                    dk.findClass {
+                        searchPackages("com.sogou.inputmethod.beacon")
+                        matcher {
+                            usingStrings(listOf("eventName"), StringMatchType.Contains)
+                            addMethod {
+                                name("r", StringMatchType.Equals)
+                                paramCount(2)
+                            }
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             )
             listOf("l", "o", "w").forEach { mName ->
                 hookClassMethodsByName(
@@ -1114,11 +1249,14 @@ object SogouHookPack : ImeHookPack {
             }
             listOf("r", "v").forEach { mName ->
                 val retType = safeDeclaredMethods(beaconDRes.value).firstOrNull { it.name == mName }?.returnType
-                hookResolvedMethod(
+                hookMethodOnClass(
                     registry, resolver, stats, ruleId,
                     hookId = "beacon_d_$mName",
                     cacheKey = "sogou.beacon.d#$mName",
-                    fastPath = { SymbolResolver.findDeclaredMethodOrNull(beaconDRes.value, mName, String::class.java, Map::class.java) },
+                    classResult = beaconDRes,
+                    methodName = mName,
+                    String::class.java,
+                    Map::class.java,
                     hooker = XposedInterface.Hooker { chain ->
                         if (!isPointEnabled(ruleId)) return@Hooker chain.proceed()
                         registry.incrementBlocked(ruleId)
@@ -1156,11 +1294,13 @@ object SogouHookPack : ImeHookPack {
                     hooker = voidNoOpHooker(ruleId)
                 )
             }
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "qimei_getQimeiSync",
                 cacheKey = "sogou.qimei.QimeiHelper#getQimeiSync",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(qimeiRes.value, "getQimeiSync") },
+                classResult = qimeiRes,
+                methodName = "getQimeiSync",
+                returnType = "java.lang.String",
                 hooker = emptyStringHooker(ruleId)
             )
 
@@ -1187,7 +1327,7 @@ object SogouHookPack : ImeHookPack {
                                     )
                                 )
                             )
-                    ).firstOrNull()?.descriptor
+                    ).singleOrNull()?.descriptor
                 }
             )
             listOf("a", "b", "c").forEach { mName ->
@@ -1237,20 +1377,24 @@ object SogouHookPack : ImeHookPack {
             val miAdvHelperRes = resolver.resolveClass(
                 cacheKey = "sogou.miadvertise.MiAdvertiseDataHelper",
                 fastPathCandidates = listOf("com.sogou.inputmethod.oem.xiaomi.miadvertise.MiAdvertiseDataHelper"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "isAdDataValid", "cme_5", "cme_15") }
+                dexKitFinder = { dk -> findClassByStrings(dk, "cme_5", "cme_15", "android.intent.action.VIEW") }
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "miadv_helper_k",
                 cacheKey = "sogou.miadvertise.MiAdvertiseDataHelper#k",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(miAdvHelperRes.value, "k") },
+                classResult = miAdvHelperRes,
+                methodName = "k",
+                returnType = "boolean",
                 hooker = booleanFalseHooker(ruleId)
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "miadv_helper_p",
                 cacheKey = "sogou.miadvertise.MiAdvertiseDataHelper#p",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(miAdvHelperRes.value, "p") },
+                classResult = miAdvHelperRes,
+                methodName = "p",
+                returnType = "void",
                 hooker = voidNoOpHooker(ruleId)
             )
 
@@ -1268,21 +1412,18 @@ object SogouHookPack : ImeHookPack {
                                         .paramTypes("java.lang.String", "java.lang.String")
                                 )
                             )
-                    ).firstOrNull()?.descriptor
+                    ).singleOrNull()?.descriptor
                 }
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "miadv_f_a",
                 cacheKey = "sogou.miadvertise.f#a",
-                fastPath = {
-                    SymbolResolver.findDeclaredMethodOrNull(
-                        miAdvFRes.value,
-                        "a",
-                        String::class.java,
-                        String::class.java
-                    )
-                },
+                classResult = miAdvFRes,
+                methodName = "a",
+                String::class.java,
+                String::class.java,
+                returnType = "void",
                 hooker = voidNoOpHooker(ruleId)
             )
 
@@ -1298,7 +1439,7 @@ object SogouHookPack : ImeHookPack {
             val scrashlyRes = resolver.resolveClass(
                 cacheKey = "sogou.scrashly.a",
                 fastPathCandidates = listOf("com.sogou.scrashly.a"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "Bugly oa 2.0 is open!", "BU_INPUT:") }
+                dexKitFinder = { dk -> findClassByStrings(dk, "Bugly oa 2.0 is open!", "work_thread_lag") }
             )
             listOf("d", "f", "g").forEach { mName ->
                 hookClassMethodsByName(
@@ -1314,23 +1455,32 @@ object SogouHookPack : ImeHookPack {
             val u3Res = resolver.resolveClass(
                 cacheKey = "sogou.u3",
                 fastPathCandidates = listOf("com.sohu.inputmethod.sogou.u3"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "a508ec6e-be5b-41a1-8f1c-5eed3a608db0", "c56bbe5e1b") }
+                dexKitFinder = { dk ->
+                    dk.findClass {
+                        searchPackages("com.sohu.inputmethod.sogou")
+                        matcher {
+                            addMethod {
+                                name("i", StringMatchType.Equals)
+                                paramTypes("android.app.Application")
+                                returnType("void")
+                            }
+                            addMethod {
+                                name("g", StringMatchType.Equals)
+                                paramTypes("android.app.Application")
+                                returnType("void")
+                            }
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "u3_i",
                 cacheKey = "sogou.u3#i",
-                fastPath = {
-                    SymbolResolver.findDeclaredMethodOrNull(u3Res.value, "i", Application::class.java)
-                },
-                dexKitFinder = { dk ->
-                    findMethodBy(
-                        dk = dk,
-                        returnType = "void",
-                        paramTypes = arrayOf("android.app.Application"),
-                        strings = arrayOf("a508ec6e-be5b-41a1-8f1c-5eed3a608db0")
-                    )
-                },
+                classResult = u3Res,
+                methodName = "i",
+                Application::class.java,
+                returnType = "void",
                 hooker = voidNoOpHooker(ruleId)
             )
 
@@ -1404,32 +1554,38 @@ object SogouHookPack : ImeHookPack {
         val cloudSettingsCls = resolver.resolveClass(
             cacheKey = "sogou.cloud.CloudSettings",
             fastPathCandidates = listOf("com.sohu.inputmethod.cloud.CloudSettings"),
-            dexKitFinder = { dk -> findClassByStrings(dk, "CloudSettings") }
+            dexKitFinder = { dk ->
+                dk.findClass {
+                    searchPackages("com.sohu.inputmethod.cloud")
+                    matcher {
+                        addMethod { name("isCloudSinkOn", StringMatchType.Equals) }
+                        addMethod { name("isCloudSinkAndSendWhenDown", StringMatchType.Equals) }
+                    }
+                }.singleOrNull()?.descriptor
+            }
         )
-        hookResolvedMethod(
+        hookMethodOnClass(
             registry, resolver, stats, ruleId,
             hookId = "cloud_settings_on",
             cacheKey = "sogou.CloudSettings#isCloudSinkOn",
-            fastPath = { cl ->
-                val cls = cloudSettingsCls.value
-                    ?: SymbolResolver.loadClassOrNull("com.sohu.inputmethod.cloud.CloudSettings", cl)
-                SymbolResolver.findDeclaredMethodOrNull(cls, "isCloudSinkOn", Context::class.java)
-            },
+            classResult = cloudSettingsCls,
+            methodName = "isCloudSinkOn",
+            Context::class.java,
+            returnType = "boolean",
             primary = true,
             hooker = XposedInterface.Hooker { chain ->
                 if (!ConfigBridge.isTargetManaged(target)) return@Hooker chain.proceed()
                 ConfigBridge.isCloudEnabled(target)
             }
         )
-        hookResolvedMethod(
+        hookMethodOnClass(
             registry, resolver, stats, ruleId,
             hookId = "cloud_settings_send_down",
             cacheKey = "sogou.CloudSettings#isCloudSinkAndSendWhenDown",
-            fastPath = { cl ->
-                val cls = cloudSettingsCls.value
-                    ?: SymbolResolver.loadClassOrNull("com.sohu.inputmethod.cloud.CloudSettings", cl)
-                SymbolResolver.findDeclaredMethodOrNull(cls, "isCloudSinkAndSendWhenDown", Context::class.java)
-            },
+            classResult = cloudSettingsCls,
+            methodName = "isCloudSinkAndSendWhenDown",
+            Context::class.java,
+            returnType = "boolean",
             hooker = XposedInterface.Hooker { chain ->
                 if (ConfigBridge.isTargetManaged(target) && !ConfigBridge.isCloudEnabled(target)) {
                     return@Hooker false
@@ -1447,7 +1603,15 @@ object SogouHookPack : ImeHookPack {
         if (cloudMgrCls != null) {
             val j2Class = resolver.resolveClass(
                 cacheKey = "sogou.j2",
-                fastPathCandidates = listOf("com.sohu.inputmethod.sogou.j2")
+                fastPathCandidates = listOf("com.sohu.inputmethod.sogou.j2"),
+                dexKitFinder = { dk ->
+                    dk.findClass {
+                        searchPackages("com.sohu.inputmethod.sogou")
+                        matcher {
+                            usingStrings(listOf("  enableCht=", "/symuser.xml"), StringMatchType.Contains)
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             ).value
             cachedCloudMgrRefs = CloudMgrRefs(cloudMgrCls, j2Class)
             val refs = cachedCloudMgrRefs!!
@@ -1457,11 +1621,14 @@ object SogouHookPack : ImeHookPack {
                 Triple("cloudmgr_m", "m", arrayOf<Class<*>>(Boolean::class.javaPrimitiveType!!)),
                 Triple("cloudmgr_P0", "P0", emptyArray())
             ).forEach { (hookId, mName, params) ->
-                hookResolvedMethod(
+                hookMethodOnClass(
                     registry, resolver, stats, ruleId,
                     hookId = hookId,
                     cacheKey = "sogou.CloudMgr#$mName",
-                    fastPath = { SymbolResolver.findDeclaredMethodOrNull(cloudMgrCls, mName, *params) },
+                    classResult = cloudMgrRes,
+                    methodName = mName,
+                    *params,
+                    returnType = "void",
                     hooker = XposedInterface.Hooker { chain ->
                         if (ConfigBridge.isTargetManaged(target) && !ConfigBridge.isCloudEnabled(target)) {
                             registry.incrementBlocked(ruleId)
@@ -1472,22 +1639,18 @@ object SogouHookPack : ImeHookPack {
                 )
             }
 
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "cloudmgr_k_assoc",
                 cacheKey = "sogou.CloudMgr#k",
-                fastPath = {
-                    SymbolResolver.findDeclaredMethodOrNull(
-                        cloudMgrCls,
-                        "k",
-                        CharSequence::class.java,
-                        Int::class.javaPrimitiveType!!,
-                        Char::class.javaPrimitiveType!!,
-                        Int::class.javaPrimitiveType!!,
-                        String::class.java,
-                        Int::class.javaPrimitiveType!!
-                    )
-                },
+                classResult = cloudMgrRes,
+                methodName = "k",
+                CharSequence::class.java,
+                Int::class.javaPrimitiveType!!,
+                Char::class.javaPrimitiveType!!,
+                Int::class.javaPrimitiveType!!,
+                String::class.java,
+                Int::class.javaPrimitiveType!!,
                 hooker = XposedInterface.Hooker { chain ->
                     if (ConfigBridge.isTargetManaged(target) && !ConfigBridge.isCloudEnabled(target)) {
                         registry.incrementBlocked(ruleId)
@@ -1497,11 +1660,13 @@ object SogouHookPack : ImeHookPack {
                 }
             )
 
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "cloudmgr_p_state",
                 cacheKey = "sogou.CloudMgr#p",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(cloudMgrCls, "p") },
+                classResult = cloudMgrRes,
+                methodName = "p",
+                returnType = "int",
                 hooker = XposedInterface.Hooker { chain ->
                     if (ConfigBridge.isTargetManaged(target) && !ConfigBridge.isCloudEnabled(target)) {
                         return@Hooker 0
@@ -1510,11 +1675,13 @@ object SogouHookPack : ImeHookPack {
                 }
             )
 
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "cloudmgr_o_refresh",
                 cacheKey = "sogou.CloudMgr#o",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(cloudMgrCls, "o") },
+                classResult = cloudMgrRes,
+                methodName = "o",
+                returnType = "void",
                 hooker = XposedInterface.Hooker { chain ->
                     val thisObj = chain.getThisObject()
                     val cfg = ConfigBridge.current
@@ -1550,29 +1717,25 @@ object SogouHookPack : ImeHookPack {
             val v2Res = resolver.resolveClass(
                 cacheKey = "sogou.v2",
                 fastPathCandidates = listOf("com.sohu.inputmethod.sogou.v2"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "pwpur", "offpwpur", "indiv_applist.zip") }
+                dexKitFinder = { dk -> findClassByStrings(dk, "pwpur", "offpwpur", "indiv_applist") }
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "v2_piggyback_l",
                 cacheKey = "sogou.v2#l",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(v2Res.value, "l") },
-                dexKitFinder = { dk ->
-                    findMethodBy(
-                        dk = dk,
-                        returnType = "com.sogou.inputmethod.sogou.cloud.data.BaseInputRequestInfo",
-                        paramCount = 0,
-                        strings = arrayOf("indiv_applist.zip")
-                    )
-                },
+                classResult = v2Res,
+                methodName = "l",
+                returnType = "com.sogou.inputmethod.sogou.cloud.data.BaseInputRequestInfo",
                 primary = true,
                 hooker = nullHooker(ruleId)
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "v2_piggyback_e",
                 cacheKey = "sogou.v2#e",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(v2Res.value, "e") },
+                classResult = v2Res,
+                methodName = "e",
+                returnType = "void",
                 hooker = voidNoOpHooker(ruleId)
             )
         }
@@ -1611,7 +1774,18 @@ object SogouHookPack : ImeHookPack {
             val reqSenderCls = resolver.resolveClass(
                 cacheKey = "sogou.InputRequestsSender",
                 fastPathCandidates = listOf("com.sohu.inputmethod.input.InputRequestsSender"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "input_requests_key") }
+                dexKitFinder = { dk ->
+                    dk.findClass {
+                        searchPackages("com.sohu.inputmethod.input")
+                        matcher {
+                            usingStrings(listOf("input_requests_key"), StringMatchType.Contains)
+                            addMethod {
+                                name("b", StringMatchType.Equals)
+                                paramCount(1)
+                            }
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             )
             val baseReqCls = resolver.resolveClass(
                 cacheKey = "sogou.BaseInputRequestInfo",
@@ -1621,7 +1795,7 @@ object SogouHookPack : ImeHookPack {
                         FindClass.create()
                             .searchPackages("com.sogou.inputmethod.sogou.cloud.data")
                             .matcher(ClassMatcher.create().addMethod(MethodMatcher.create().name("getRequestTypeName")))
-                    ).firstOrNull()?.descriptor
+                    ).singleOrNull()?.descriptor
                 }
             )
 
@@ -1635,12 +1809,17 @@ object SogouHookPack : ImeHookPack {
                     } else null
                 },
                 dexKitFinder = { dk ->
-                    findMethodBy(
-                        dk = dk,
-                        searchPackages = arrayOf("com.sohu.inputmethod.input"),
-                        paramCount = 2,
-                        strings = arrayOf("Net_Switch")
-                    )
+                    val cls = wsSenderCls.value ?: return@resolveMethod null
+                    val req = baseReqCls.value ?: return@resolveMethod null
+                    dk.findMethod {
+                        searchPackages("com.sohu.inputmethod.input")
+                        matcher {
+                            declaredClass(cls.name, StringMatchType.Equals)
+                            name("g", StringMatchType.Equals)
+                            paramTypes("android.content.Context", req.name)
+                            returnType("void")
+                        }
+                    }.singleOrNull()?.descriptor
                 },
                 structuralFallback = {
                     safeDeclaredMethods(wsSenderCls.value).firstOrNull { method ->
@@ -1697,12 +1876,17 @@ object SogouHookPack : ImeHookPack {
                     } else null
                 },
                 dexKitFinder = { dk ->
-                    findMethodBy(
-                        dk = dk,
-                        searchPackages = arrayOf("com.sohu.inputmethod.input"),
-                        paramCount = 1,
-                        strings = arrayOf("input_requests_key")
-                    )
+                    val cls = reqSenderCls.value ?: return@resolveMethod null
+                    val req = baseReqCls.value ?: return@resolveMethod null
+                    dk.findMethod {
+                        searchPackages("com.sohu.inputmethod.input")
+                        matcher {
+                            declaredClass(cls.name, StringMatchType.Equals)
+                            name("b", StringMatchType.Equals)
+                            paramTypes(req.name)
+                            returnType("void")
+                        }
+                    }.singleOrNull()?.descriptor
                 },
                 structuralFallback = {
                     safeDeclaredMethods(reqSenderCls.value).firstOrNull { method ->
@@ -1776,12 +1960,31 @@ object SogouHookPack : ImeHookPack {
         val reqInfoRes = resolver.resolveClass(
             cacheKey = "sogou.cloud.CloudRequestInfo",
             fastPathCandidates = listOf("com.sohu.inputmethod.cloud.CloudRequestInfo"),
-            dexKitFinder = { dk -> findClassByStrings(dk, "CloudRequestInfo") }
+            dexKitFinder = { dk ->
+                dk.findClass {
+                    searchPackages("com.sohu.inputmethod.cloud")
+                    matcher {
+                        addMethod { name("getUncommittedText", StringMatchType.Equals) }
+                        addMethod { name("getSyllableInfos", StringMatchType.Equals) }
+                    }
+                }.singleOrNull()?.descriptor
+            }
         )
         val cloudBRes = resolver.resolveClass(
             cacheKey = "sogou.cloud.b",
             fastPathCandidates = listOf("com.sohu.inputmethod.sogou.cloud.b"),
-            dexKitFinder = { dk -> findClassByStrings(dk, "#%#", "&nbsp", "UTF-16LE") }
+            dexKitFinder = { dk ->
+                dk.findClass {
+                    searchPackages("com.sohu.inputmethod.sogou.cloud")
+                    matcher {
+                        usingStrings(listOf("#%#", "&nbsp", "UTF-16LE"), StringMatchType.Contains)
+                        addMethod {
+                            name("h", StringMatchType.Equals)
+                            paramTypes("com.sohu.inputmethod.cloud.CloudRequestInfo", "android.content.Context")
+                        }
+                    }
+                }.singleOrNull()?.descriptor
+            }
         )
         val cloudARes = resolver.resolveClass(
             cacheKey = "sogou.cloud.a",
@@ -1983,6 +2186,17 @@ object SogouHookPack : ImeHookPack {
         if (!voiceEnabled && !hostPkgEnabled) return
 
         val stats = RuleStats()
+        val asrConfigRes = resolver.resolveClass(
+            cacheKey = "sogou.ai.AsrConfig",
+            fastPathCandidates = listOf("com.sogou.ai.nsrss.modules.conf.AsrConfig"),
+            dexKitFinder = { dk ->
+                dk.findClass(
+                    FindClass.create()
+                        .searchPackages("com.sogou.ai.nsrss.modules.conf")
+                        .matcher(ClassMatcher.create().addMethod(MethodMatcher.create().name("withAID")))
+                ).singleOrNull()?.descriptor
+            }
+        )
 
         if (voiceEnabled) {
             val voiceModelFRes = resolver.resolveClass(
@@ -2007,19 +2221,16 @@ object SogouHookPack : ImeHookPack {
                 primary = true,
                 hooker = voidNoOpHooker(ruleId)
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "voice_f_user_identity",
                 cacheKey = "sogou.voice_input.models.f#j",
-                fastPath = {
-                    SymbolResolver.findDeclaredMethodOrNull(
-                        voiceModelFRes.value,
-                        "j",
-                        String::class.java,
-                        String::class.java,
-                        Boolean::class.javaPrimitiveType!!
-                    )
-                },
+                classResult = voiceModelFRes,
+                methodName = "j",
+                String::class.java,
+                String::class.java,
+                Boolean::class.javaPrimitiveType!!,
+                returnType = "void",
                 hooker = XposedInterface.Hooker { chain ->
                     if (!isPointEnabled(ruleId)) return@Hooker chain.proceed()
                     registry.incrementBlocked(ruleId)
@@ -2027,23 +2238,14 @@ object SogouHookPack : ImeHookPack {
                 }
             )
 
-            val asrConfigRes = resolver.resolveClass(
-                cacheKey = "sogou.ai.AsrConfig",
-                fastPathCandidates = listOf("com.sogou.ai.nsrss.modules.conf.AsrConfig"),
-                dexKitFinder = { dk ->
-                    dk.findClass(
-                        FindClass.create()
-                            .searchPackages("com.sogou.ai.nsrss")
-                            .matcher(ClassMatcher.create().addMethod(MethodMatcher.create().name("withAID")))
-                    ).firstOrNull()?.descriptor
-                }
-            )
             listOf("withAID", "withQID", "withUUID").forEach { mName ->
-                hookResolvedMethod(
+                hookMethodOnClass(
                     registry, resolver, stats, ruleId,
                     hookId = "asr_$mName",
                     cacheKey = "sogou.ai.AsrConfig#$mName",
-                    fastPath = { SymbolResolver.findDeclaredMethodOrNull(asrConfigRes.value, mName, String::class.java) },
+                    classResult = asrConfigRes,
+                    methodName = mName,
+                    String::class.java,
                     hooker = selfReturningHooker(ruleId)
                 )
             }
@@ -2052,46 +2254,35 @@ object SogouHookPack : ImeHookPack {
                 cacheKey = "sogou.ai.MtConfig",
                 fastPathCandidates = listOf("com.sogou.ai.nsrss.modules.conf.MtConfig"),
                 dexKitFinder = { dk ->
-                    dk.findClass(
-                        FindClass.create()
-                            .searchPackages("com.sogou.ai.nsrss")
-                            .matcher(ClassMatcher.create().addMethod(MethodMatcher.create().name("withUUID")))
-                    ).firstOrNull()?.descriptor
+                    dk.findClass {
+                        searchPackages("com.sogou.ai.nsrss.modules.conf")
+                        matcher {
+                            addMethod { name("withSourceLanguageCode", StringMatchType.Equals) }
+                            addMethod { name("withUUID", StringMatchType.Equals) }
+                        }
+                    }.singleOrNull()?.descriptor
                 }
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "mt_withUUID",
                 cacheKey = "sogou.ai.MtConfig#withUUID",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(mtConfigRes.value, "withUUID", String::class.java) },
+                classResult = mtConfigRes,
+                methodName = "withUUID",
+                String::class.java,
                 hooker = selfReturningHooker(ruleId)
             )
         }
 
         // Runtime host package & voice privacy shared sinks
         val voiceOrHostRuleId = if (voiceEnabled) ruleId else HookRuleCatalog.RULE_SOGOU_CONTEXT_HOST_PACKAGE
-        val asrConfigForHostRes = resolver.resolveClass(
-            cacheKey = "sogou.ai.AsrConfig",
-            fastPathCandidates = listOf("com.sogou.ai.nsrss.modules.conf.AsrConfig"),
-            dexKitFinder = { dk ->
-                dk.findClass(
-                    FindClass.create()
-                        .searchPackages("com.sogou.ai.nsrss")
-                        .matcher(ClassMatcher.create().addMethod(MethodMatcher.create().name("withRuntimeProductId")))
-                ).firstOrNull()?.descriptor
-            }
-        )
-        hookResolvedMethod(
+        hookMethodOnClass(
             registry, resolver, stats, voiceOrHostRuleId,
             hookId = "asr_withRuntimeProductId",
             cacheKey = "sogou.ai.AsrConfig#withRuntimeProductId",
-            fastPath = {
-                SymbolResolver.findDeclaredMethodOrNull(
-                    asrConfigForHostRes.value,
-                    "withRuntimeProductId",
-                    String::class.java
-                )
-            },
+            classResult = asrConfigRes,
+            methodName = "withRuntimeProductId",
+            String::class.java,
             hooker = XposedInterface.Hooker { chain ->
                 val enabled = isPointEnabled(ruleId) || isPointEnabled(HookRuleCatalog.RULE_SOGOU_CONTEXT_HOST_PACKAGE)
                 if (!enabled) return@Hooker chain.proceed()
@@ -2152,11 +2343,13 @@ object SogouHookPack : ImeHookPack {
             fastPathCandidates = listOf("com.sogou.inputmethod.voice_input.bean.d"),
             dexKitFinder = { dk -> findClassByStrings(dk, "notStopSpaceVoice", "clickKeyStartInput") }
         )
-        hookResolvedMethod(
+        hookMethodOnClass(
             registry, resolver, stats, voiceOrHostRuleId,
             hookId = "voice_bean_d_c",
             cacheKey = "sogou.voice_input.bean.d#c",
-            fastPath = { SymbolResolver.findDeclaredMethodOrNull(voiceBeanDRes.value, "c") },
+            classResult = voiceBeanDRes,
+            methodName = "c",
+            returnType = "java.lang.String",
             hooker = XposedInterface.Hooker { chain ->
                 val raw = chain.proceed() as? String ?: return@Hooker null
                 val enabled = isPointEnabled(ruleId) || isPointEnabled(HookRuleCatalog.RULE_SOGOU_CONTEXT_HOST_PACKAGE)
@@ -2194,14 +2387,16 @@ object SogouHookPack : ImeHookPack {
                         FindClass.create()
                             .searchPackages("com.sogou.bu.basic.settings")
                             .matcher(ClassMatcher.create().addMethod(MethodMatcher.create().name("t4").returnType("boolean")))
-                    ).firstOrNull()?.descriptor
+                    ).singleOrNull()?.descriptor
                 }
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "setting_manager_t4",
                 cacheKey = "sogou.SettingManager#t4",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(settingMgrRes.value, "t4") },
+                classResult = settingMgrRes,
+                methodName = "t4",
+                returnType = "boolean",
                 primary = true,
                 hooker = booleanFalseHooker(ruleId)
             )
@@ -2211,20 +2406,23 @@ object SogouHookPack : ImeHookPack {
                 fastPathCandidates = listOf("com.sohu.inputmethod.sogou.mutualdata.MutualDataManager"),
                 dexKitFinder = { dk -> findClassByStrings(dk, "#^^#mdst=", "app=EMPTY#^^#mdst=") }
             )
-            val mdmCls = mdmRes.value
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "mdm_q",
                 cacheKey = "sogou.MutualDataManager#q",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(mdmCls, "q") },
+                classResult = mdmRes,
+                methodName = "q",
+                returnType = "boolean",
                 primary = true,
                 hooker = booleanFalseHooker(ruleId)
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "mdm_m",
                 cacheKey = "sogou.MutualDataManager#m",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(mdmCls, "m", Int::class.javaPrimitiveType!!) },
+                classResult = mdmRes,
+                methodName = "m",
+                Int::class.javaPrimitiveType!!,
                 hooker = nullHooker(ruleId)
             )
             listOf(
@@ -2238,11 +2436,14 @@ object SogouHookPack : ImeHookPack {
                 Triple("mdm_A", "A", arrayOf<Class<*>>(Double::class.javaPrimitiveType!!)),
                 Triple("mdm_B", "B", arrayOf<Class<*>>(Double::class.javaPrimitiveType!!))
             ).forEach { (hookId, mName, params) ->
-                hookResolvedMethod(
+                hookMethodOnClass(
                     registry, resolver, stats, ruleId,
                     hookId = hookId,
                     cacheKey = "sogou.MutualDataManager#$mName",
-                    fastPath = { SymbolResolver.findDeclaredMethodOrNull(mdmCls, mName, *params) },
+                    classResult = mdmRes,
+                    methodName = mName,
+                    *params,
+                    returnType = "void",
                     primary = mName in setOf("j", "F", "G"),
                     hooker = voidNoOpHooker(ruleId)
                 )
@@ -2253,28 +2454,26 @@ object SogouHookPack : ImeHookPack {
                 fastPathCandidates = listOf("com.sohu.inputmethod.sogou.bigdata.c"),
                 dexKitFinder = { dk -> findClassByStrings(dk, "load_sql_cipher_so_now_key", "BigDataManager") }
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "bigdata_c_D",
                 cacheKey = "sogou.bigdata.c#D",
-                fastPath = {
-                    SymbolResolver.findDeclaredMethodOrNull(
-                        bigDataCRes.value,
-                        "D",
-                        String::class.java,
-                        String::class.java,
-                        Int::class.javaPrimitiveType!!
-                    )
-                },
+                classResult = bigDataCRes,
+                methodName = "D",
+                String::class.java,
+                String::class.java,
+                Int::class.javaPrimitiveType!!,
+                returnType = "void",
                 hooker = voidNoOpHooker(ruleId)
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "bigdata_c_R",
                 cacheKey = "sogou.bigdata.c#R",
-                fastPath = {
-                    SymbolResolver.findDeclaredMethodOrNull(bigDataCRes.value, "R", Int::class.javaPrimitiveType!!)
-                },
+                classResult = bigDataCRes,
+                methodName = "R",
+                Int::class.javaPrimitiveType!!,
+                returnType = "void",
                 hooker = voidNoOpHooker(ruleId)
             )
 
@@ -2286,7 +2485,7 @@ object SogouHookPack : ImeHookPack {
                         FindClass.create()
                             .searchPackages("com.sohu.inputmethod.sogou.bigdata.mutual")
                             .matcher(ClassMatcher.create().addMethod(MethodMatcher.create().name("A")))
-                    ).firstOrNull()?.descriptor
+                    ).singleOrNull()?.descriptor
                 }
             )
             listOf("m", "A").forEach { mName ->
@@ -2315,7 +2514,14 @@ object SogouHookPack : ImeHookPack {
             val vpaRes = resolver.resolveClass(
                 cacheKey = "sogou.VpaClipboardManager",
                 fastPathCandidates = listOf("com.sohu.inputmethod.clipboard.vpaclipboard.VpaClipboardManager"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "sp_key_vpa_clipboard_unlimit_show_times") }
+                dexKitFinder = { dk ->
+                    dk.findClass {
+                        searchPackages("com.sohu.inputmethod.clipboard.vpaclipboard")
+                        matcher {
+                            usingStrings(listOf("sp_key_vpa_clipboard_unlimit_show_times"), StringMatchType.Contains)
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             )
             hookClassMethodsByName(
                 registry, stats, ruleId,
@@ -2329,7 +2535,7 @@ object SogouHookPack : ImeHookPack {
             val kouLingRes = resolver.resolveClass(
                 cacheKey = "sogou.KouLingClipBoardManager",
                 fastPathCandidates = listOf("com.sohu.inputmethod.clipboard.KouLingClipBoardManager"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "KouLing_Service") }
+                dexKitFinder = { dk -> findClassByStrings(dk, "clipboard_kouling.kl") }
             )
             listOf("n", "o", "p").forEach { mName ->
                 hookClassMethodsByName(
@@ -2347,25 +2553,40 @@ object SogouHookPack : ImeHookPack {
                 fastPathCandidates = listOf("com.sohu.inputmethod.asyncpenetrate.c"),
                 dexKitFinder = { dk -> findClassByStrings(dk, "no penetrate_code_valid", "has penetrate_code_valid: ") }
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "asyncpenetrate_m",
                 cacheKey = "sogou.asyncpenetrate.c#m",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(asyncPenRes.value, "m", String::class.java) },
+                classResult = asyncPenRes,
+                methodName = "m",
+                String::class.java,
+                returnType = "boolean",
                 hooker = booleanFalseHooker(ruleId)
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "asyncpenetrate_n",
                 cacheKey = "sogou.asyncpenetrate.c#n",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(asyncPenRes.value, "n") },
+                classResult = asyncPenRes,
+                methodName = "n",
+                returnType = "void",
                 hooker = voidNoOpHooker(ruleId)
             )
 
             val quickPortalRes = resolver.resolveClass(
                 cacheKey = "sogou.BusinessQuickPortalManager",
                 fastPathCandidates = listOf("com.sohu.inputmethod.clipboard.BusinessQuickPortal.BusinessQuickPortalManager"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "replace_tpwd") }
+                dexKitFinder = { dk ->
+                    dk.findClass {
+                        searchPackages("com.sohu.inputmethod.clipboard.BusinessQuickPortal")
+                        matcher {
+                            usingStrings(
+                                listOf("BusinessQuickPortalManager.writeTpwdToClipboard(...)"),
+                                StringMatchType.Contains
+                            )
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             )
             hookClassMethodsByName(
                 registry, stats, ruleId,
@@ -2394,7 +2615,11 @@ object SogouHookPack : ImeHookPack {
         }
     }
 
-    private fun installClipAutoTranslateAndJsRule(resolver: SymbolResolver, registry: HookRegistry) {
+    private fun installClipAutoTranslateAndJsRule(
+        resolver: SymbolResolver,
+        registry: HookRegistry,
+        sharedFlxWebViewRes: Lazy<ResolveResult<Class<*>>>
+    ) {
         val ruleId = HookRuleCatalog.RULE_SOGOU_CLIP_AUTO_TRANSLATE_AND_JS
         registry.installRuleIfEnabled(ruleId) {
             val stats = RuleStats()
@@ -2402,13 +2627,28 @@ object SogouHookPack : ImeHookPack {
             val copyAutoTrRes = resolver.resolveClass(
                 cacheKey = "sogou.CopyAutoTranslateManager",
                 fastPathCandidates = listOf("com.sohu.inputmethod.clipboard.autotranslate.CopyAutoTranslateManager"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "translate_words", "copy_auto_translate_entrance") }
+                dexKitFinder = { dk ->
+                    dk.findClass {
+                        searchPackages("com.sohu.inputmethod.clipboard.autotranslate")
+                        matcher {
+                            addInterface("android.view.View\$OnClickListener")
+                            addMethod {
+                                name("n", StringMatchType.Equals)
+                                paramTypes("java.lang.String")
+                                returnType("void")
+                            }
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "copy_auto_translate_n",
                 cacheKey = "sogou.CopyAutoTranslateManager#n",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(copyAutoTrRes.value, "n", String::class.java) },
+                classResult = copyAutoTrRes,
+                methodName = "n",
+                String::class.java,
+                returnType = "void",
                 primary = true,
                 hooker = voidNoOpHooker(ruleId)
             )
@@ -2416,7 +2656,14 @@ object SogouHookPack : ImeHookPack {
             val jsInterfaceRes = resolver.resolveClass(
                 cacheKey = "sogou.hotwords.SogouJSInterface",
                 fastPathCandidates = listOf("base.sogou.mobile.hotwordsbase.utils.SogouJSInterface"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "SogouHotwordsUtils", "requestClipBoardText") }
+                dexKitFinder = { dk ->
+                    dk.findClass {
+                        searchPackages("base.sogou.mobile.hotwordsbase.utils")
+                        matcher {
+                            addMethod { name("requestClipBoardText", StringMatchType.Equals) }
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             )
             hookClassMethodsByName(
                 registry, stats, ruleId,
@@ -2427,23 +2674,29 @@ object SogouHookPack : ImeHookPack {
                 hooker = voidNoOpHooker(ruleId)
             )
 
-            val flxWebViewRes = resolver.resolveClass(
-                cacheKey = "sogou.flx.FlxImeWebView",
-                fastPathCandidates = listOf("com.sohu.inputmethod.flx.miniprogram.view.FlxImeWebView"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "responseClipBoardText", "key_sogou_clipboard") }
-            )
-            hookResolvedMethod(
+            val flxWebViewRes = sharedFlxWebViewRes.value
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "flx_webview_getClipBoardContent",
                 cacheKey = "sogou.flx.FlxImeWebView#getClipBoardContent",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(flxWebViewRes.value, "getClipBoardContent") },
+                classResult = flxWebViewRes,
+                methodName = "getClipBoardContent",
+                returnType = "java.lang.String",
                 hooker = emptyStringHooker(ruleId)
             )
 
             val flxJsRes = resolver.resolveClass(
                 cacheKey = "sogou.flx.FlxProgramJsInterface",
                 fastPathCandidates = listOf("com.sohu.inputmethod.flx.miniprogram.view.FlxImeWebView\$FlxProgramJsInterface"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "requestSogouClipBoardText") }
+                dexKitFinder = { dk ->
+                    dk.findClass {
+                        searchPackages("com.sohu.inputmethod.flx.miniprogram.view")
+                        matcher {
+                            addMethod { name("requestSogouClipBoardText", StringMatchType.Equals) }
+                            addMethod { name("requestClipBoardText", StringMatchType.Equals) }
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             )
             listOf("requestClipBoardText", "requestSogouClipBoardText").forEach { mName ->
                 hookClassMethodsByName(
@@ -2505,11 +2758,13 @@ object SogouHookPack : ImeHookPack {
                     findClassByStrings(dk, "SystemClipboardListener", "SystemClipboardListener_onPrimaryClipChanged_")
                 }
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "clipboard_x_onPrimaryClipChanged",
                 cacheKey = "sogou.clipboard.x#onPrimaryClipChanged",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(clipXRes.value, "onPrimaryClipChanged") },
+                classResult = clipXRes,
+                methodName = "onPrimaryClipChanged",
+                returnType = "void",
                 primary = true,
                 hooker = XposedInterface.Hooker { chain ->
                     if (!isPointEnabled(ruleId)) return@Hooker chain.proceed()
@@ -2534,11 +2789,13 @@ object SogouHookPack : ImeHookPack {
                 methodName = "m",
                 hooker = voidNoOpHooker(ruleId)
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "clipboard_q_n",
                 cacheKey = "sogou.clipboard.q#n",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(clipQRes.value, "n") },
+                classResult = clipQRes,
+                methodName = "n",
+                returnType = "boolean",
                 hooker = booleanFalseHooker(ruleId)
             )
 
@@ -2563,7 +2820,7 @@ object SogouHookPack : ImeHookPack {
                         FindClass.create()
                             .searchPackages("com.sohu.inputmethod.settings.deviceinfo")
                             .matcher(ClassMatcher.create().addMethod(MethodMatcher.create().name("addContactsInfo")))
-                    ).firstOrNull()?.descriptor
+                    ).singleOrNull()?.descriptor
                 }
             )
             listOf("addContactsInfo", "addOtherInfo", "addSmsInfo", "initData", "startDetectEmulator").forEach { mName ->
@@ -2593,50 +2850,67 @@ object SogouHookPack : ImeHookPack {
                     findClassByStrings(dk, "data_set desc  limit  0,5000", "date desc  limit  0,5000")
                 }
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "devinfo_b_m_contacts",
                 cacheKey = "sogou.deviceinfo.b#m",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(devInfoBRes.value, "m", Context::class.java) },
+                classResult = devInfoBRes,
+                methodName = "m",
+                Context::class.java,
+                returnType = "org.json.JSONArray",
                 primary = true,
                 hooker = emptyJsonArrayHooker(ruleId)
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "devinfo_b_s_sms",
                 cacheKey = "sogou.deviceinfo.b#s",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(devInfoBRes.value, "s", Context::class.java) },
+                classResult = devInfoBRes,
+                methodName = "s",
+                Context::class.java,
+                returnType = "org.json.JSONArray",
                 primary = true,
                 hooker = emptyJsonArrayHooker(ruleId)
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "devinfo_b_b",
                 cacheKey = "sogou.deviceinfo.b#b",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(devInfoBRes.value, "b", Context::class.java) },
+                classResult = devInfoBRes,
+                methodName = "b",
+                Context::class.java,
+                returnType = "void",
                 hooker = voidNoOpHooker(ruleId)
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "devinfo_b_c",
                 cacheKey = "sogou.deviceinfo.b#c",
-                fastPath = {
-                    SymbolResolver.findDeclaredMethodOrNull(devInfoBRes.value, "c", Activity::class.java, List::class.java)
-                },
+                classResult = devInfoBRes,
+                methodName = "c",
+                Activity::class.java,
+                List::class.java,
+                returnType = "void",
                 hooker = voidNoOpHooker(ruleId)
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "devinfo_b_d",
                 cacheKey = "sogou.deviceinfo.b#d",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(devInfoBRes.value, "d", Context::class.java) },
+                classResult = devInfoBRes,
+                methodName = "d",
+                Context::class.java,
+                returnType = "void",
                 hooker = voidNoOpHooker(ruleId)
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "devinfo_b_h",
                 cacheKey = "sogou.deviceinfo.b#h",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(devInfoBRes.value, "h", Context::class.java) },
+                classResult = devInfoBRes,
+                methodName = "h",
+                Context::class.java,
+                returnType = "org.json.JSONObject",
                 hooker = XposedInterface.Hooker { chain ->
                     if (!isPointEnabled(ruleId)) return@Hooker chain.proceed()
                     registry.incrementBlocked(ruleId)
@@ -2672,30 +2946,30 @@ object SogouHookPack : ImeHookPack {
                                         .returnType("java.util.List")
                                 )
                             )
-                    ).firstOrNull()?.descriptor
+                    ).singleOrNull()?.descriptor
                 }
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "util_u_a",
                 cacheKey = "sohu.util.u#a",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(utilURes.value, "a", Context::class.java) },
+                classResult = utilURes,
+                methodName = "a",
+                Context::class.java,
+                returnType = "java.lang.String",
                 primary = true,
                 hooker = emptyStringHooker(ruleId)
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "util_u_b",
                 cacheKey = "sohu.util.u#b",
-                fastPath = {
-                    SymbolResolver.findDeclaredMethodOrNull(
-                        utilURes.value,
-                        "b",
-                        Context::class.java,
-                        PackageManager::class.java,
-                        Int::class.javaPrimitiveType!!
-                    )
-                },
+                classResult = utilURes,
+                methodName = "b",
+                Context::class.java,
+                PackageManager::class.java,
+                Int::class.javaPrimitiveType!!,
+                returnType = "java.util.List",
                 primary = true,
                 hooker = emptyListHooker(ruleId)
             )
@@ -2703,7 +2977,7 @@ object SogouHookPack : ImeHookPack {
             val appStatRes = resolver.resolveClass(
                 cacheKey = "sogou.settings.internet.v",
                 fastPathCandidates = listOf("com.sohu.inputmethod.settings.internet.v"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "SoftwareStatistics-messagetmp.xml", "SoftwareStatistics") }
+                dexKitFinder = { dk -> findClassByStrings(dk, "messagetmp.xml", "SoftwareStatistics") }
             )
             hookClassMethodsByName(
                 registry, stats, ruleId,
@@ -2725,7 +2999,20 @@ object SogouHookPack : ImeHookPack {
             val contactsB0Res = resolver.resolveClass(
                 cacheKey = "sogou.settings.b0",
                 fastPathCandidates = listOf("com.sohu.inputmethod.settings.b0"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "display_name", "/v1/contact/upload") }
+                dexKitFinder = { dk ->
+                    dk.findClass {
+                        searchPackages("com.sohu.inputmethod.settings")
+                        matcher {
+                            usingStrings(listOf("display_name"), StringMatchType.Contains)
+                            addMethod {
+                                name("h", StringMatchType.Equals)
+                                paramCount(0)
+                                returnType("void")
+                                usingNumbers(1296000000L)
+                            }
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             )
             listOf("f", "h", "j").forEach { mName ->
                 hookClassMethodsByName(
@@ -2767,11 +3054,13 @@ object SogouHookPack : ImeHookPack {
                 fastPathCandidates = listOf("com.sohu.inputmethod.flx.util.recorder.FlxLocationRecorder"),
                 dexKitFinder = { dk -> findClassByStrings(dk, "cdma", "network", "location") }
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "flx_loc_i",
                 cacheKey = "sogou.flx.FlxLocationRecorder#i",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(locRecorderRes.value, "i") },
+                classResult = locRecorderRes,
+                methodName = "i",
+                returnType = "boolean",
                 primary = true,
                 hooker = booleanFalseHooker(ruleId)
             )
@@ -2807,7 +3096,12 @@ object SogouHookPack : ImeHookPack {
     // 7. sogou.net.dynamic_dex_and_js & sogou.net.httpdns
     // -------------------------------------------------------------------------
 
-    private fun installDynamicDexAndJsRule(resolver: SymbolResolver, registry: HookRegistry) {
+    private fun installDynamicDexAndJsRule(
+        resolver: SymbolResolver,
+        registry: HookRegistry,
+        sharedFlxWebViewRes: Lazy<ResolveResult<Class<*>>>,
+        sharedDeviceMRes: Lazy<ResolveResult<Class<*>>>
+    ) {
         val ruleId = HookRuleCatalog.RULE_SOGOU_NET_DYNAMIC_DEX_AND_JS
         registry.installRuleIfEnabled(ruleId) {
             val stats = RuleStats()
@@ -2841,14 +3135,16 @@ object SogouHookPack : ImeHookPack {
                                     .addInterface("java.lang.Runnable")
                                     .addMethod(MethodMatcher.create().name("run"))
                             )
-                    ).firstOrNull()?.descriptor
+                    ).singleOrNull()?.descriptor
                 }
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "hj_task_executor_run",
                 cacheKey = "sogou.hj.TaskExecutor_a#run",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(taskExecARes.value, "run") },
+                classResult = taskExecARes,
+                methodName = "run",
+                returnType = "void",
                 hooker = voidNoOpHooker(ruleId)
             )
 
@@ -2870,36 +3166,30 @@ object SogouHookPack : ImeHookPack {
                                             )
                                     )
                             )
-                    ).firstOrNull()?.descriptor
+                    ).singleOrNull()?.descriptor
                 }
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "hj_task_a_a",
                 cacheKey = "sogou.hj.task.a#a",
-                fastPath = {
-                    SymbolResolver.findDeclaredMethodOrNull(
-                        hjTaskARes.value,
-                        "a",
-                        Any::class.java,
-                        String::class.java
-                    )
-                },
+                classResult = hjTaskARes,
+                methodName = "a",
+                Any::class.java,
+                String::class.java,
+                returnType = "java.lang.Object",
                 hooker = nullHooker(ruleId)
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "hj_task_a_b",
                 cacheKey = "sogou.hj.task.a#b",
-                fastPath = {
-                    SymbolResolver.findDeclaredMethodOrNull(
-                        hjTaskARes.value,
-                        "b",
-                        String::class.java,
-                        String::class.java,
-                        String::class.java
-                    )
-                },
+                classResult = hjTaskARes,
+                methodName = "b",
+                String::class.java,
+                String::class.java,
+                String::class.java,
+                returnType = "java.lang.Class",
                 primary = true,
                 hooker = nullHooker(ruleId)
             )
@@ -2931,7 +3221,15 @@ object SogouHookPack : ImeHookPack {
             val loadDexDRes = resolver.resolveClass(
                 cacheKey = "sogou.loaddex.d",
                 fastPathCandidates = listOf("com.sogou.loaddex.d"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "/dex/") }
+                dexKitFinder = { dk ->
+                    dk.findClass {
+                        searchPackages("com.sogou.loaddex")
+                        matcher {
+                            usingStrings(listOf(".dex"), StringMatchType.Contains)
+                            addMethod { name("onWork", StringMatchType.Equals) }
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             )
             hookClassMethodsByName(
                 registry, stats, ruleId,
@@ -2949,18 +3247,15 @@ object SogouHookPack : ImeHookPack {
                     findClassByStrings(dk, "com.sogou.common_components.vibratesound.vibrator.VibratorFactory")
                 }
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "vibrator_f_f",
                 cacheKey = "sogou.vibrator.f#f",
-                fastPath = {
-                    SymbolResolver.findDeclaredMethodOrNull(
-                        vibratorFRes.value,
-                        "f",
-                        Context::class.java,
-                        String::class.java
-                    )
-                },
+                classResult = vibratorFRes,
+                methodName = "f",
+                Context::class.java,
+                String::class.java,
+                returnType = "void",
                 hooker = voidNoOpHooker(ruleId)
             )
 
@@ -2968,13 +3263,22 @@ object SogouHookPack : ImeHookPack {
             val bigDataSoARes = resolver.resolveClass(
                 cacheKey = "sogou.bigdata.so.a",
                 fastPathCandidates = listOf("com.sohu.inputmethod.sogou.bigdata.so.a"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "libsqlcipher.zip", "libsqlcipher.so_") }
+                dexKitFinder = { dk ->
+                    dk.findClass {
+                        searchPackages("com.sohu.inputmethod.sogou.bigdata.so")
+                        matcher {
+                            usingStrings(listOf("/sqlcipher/", "/temp/", "libsqlcipher.so"), StringMatchType.Contains)
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "bigdata_so_a_w",
                 cacheKey = "sogou.bigdata.so.a#w",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(bigDataSoARes.value, "w") },
+                classResult = bigDataSoARes,
+                methodName = "w",
+                returnType = "void",
                 hooker = voidNoOpHooker(ruleId)
             )
 
@@ -2982,7 +3286,14 @@ object SogouHookPack : ImeHookPack {
             val hotfixBRes = resolver.resolveClass(
                 cacheKey = "sogou.base.hotfix.b",
                 fastPathCandidates = listOf("com.sogou.base.hotfix.b"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "HotFixManager", "onInstall") }
+                dexKitFinder = { dk ->
+                    dk.findClass {
+                        searchPackages("com.sogou.base.hotfix")
+                        matcher {
+                            usingStrings(listOf("HotFixManager", "rfix_patch_"), StringMatchType.Contains)
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             )
             hookResolvedMethod(
                 registry, resolver, stats, ruleId,
@@ -2996,13 +3307,16 @@ object SogouHookPack : ImeHookPack {
                     }
                 },
                 dexKitFinder = { dk ->
-                    findMethodBy(
-                        dk = dk,
-                        searchPackages = arrayOf("com.sogou.base.hotfix"),
-                        returnType = "void",
-                        paramCount = 2,
-                        strings = emptyArray()
-                    )
+                    val cls = hotfixBRes.value ?: return@hookResolvedMethod null
+                    dk.findMethod {
+                        searchPackages("com.sogou.base.hotfix")
+                        matcher {
+                            declaredClass(cls.name, StringMatchType.Equals)
+                            name("i", StringMatchType.Equals)
+                            paramTypes("com.tencent.rfix.entry.RFixApplicationLike", "com.sogou.base.hotfix.f")
+                            returnType("void")
+                        }
+                    }.singleOrNull()?.descriptor
                 },
                 hooker = voidNoOpHooker(ruleId)
             )
@@ -3011,23 +3325,31 @@ object SogouHookPack : ImeHookPack {
             val installDexRes = resolver.resolveClass(
                 cacheKey = "sogou.hotfix.InstallDex",
                 fastPathCandidates = listOf("com.sogou.hotfix.patcher.InstallDex"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "dexElements", "loadDexFile") }
+                dexKitFinder = { dk ->
+                    dk.findClass {
+                        searchPackages("com.sogou.hotfix.patcher")
+                        matcher {
+                            addMethod {
+                                name("c", StringMatchType.Equals)
+                                paramCount(5)
+                                returnType("void")
+                            }
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             )
-            hookResolvedMethod(
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "hotfix_install_dex_c",
                 cacheKey = "sogou.hotfix.InstallDex#c",
-                fastPath = {
-                    SymbolResolver.findDeclaredMethodOrNull(
-                        installDexRes.value,
-                        "c",
-                        Application::class.java,
-                        ClassLoader::class.java,
-                        File::class.java,
-                        List::class.java,
-                        Boolean::class.javaPrimitiveType!!
-                    )
-                },
+                classResult = installDexRes,
+                methodName = "c",
+                Application::class.java,
+                ClassLoader::class.java,
+                File::class.java,
+                List::class.java,
+                Boolean::class.javaPrimitiveType!!,
+                returnType = "void",
                 hooker = voidNoOpHooker(ruleId)
             )
 
@@ -3035,7 +3357,14 @@ object SogouHookPack : ImeHookPack {
             val debugBRes = resolver.resolveClass(
                 cacheKey = "sogou.debug.b",
                 fastPathCandidates = listOf("com.sogou.debug.b"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "debug_dex_local.jar", "DebugDex") }
+                dexKitFinder = { dk ->
+                    dk.findClass {
+                        searchPackages("com.sogou.debug")
+                        matcher {
+                            usingStrings(listOf("DebugDex", "loadDexImpl: clazzName="), StringMatchType.Contains)
+                        }
+                    }.singleOrNull()?.descriptor
+                }
             )
             listOf("p", "s", "w").forEach { mName ->
                 hookClassMethodsByName(
@@ -3047,36 +3376,28 @@ object SogouHookPack : ImeHookPack {
                 )
             }
 
-            val flxWebViewRes = resolver.resolveClass(
-                cacheKey = "sogou.flx.FlxImeWebView",
-                fastPathCandidates = listOf("com.sohu.inputmethod.flx.miniprogram.view.FlxImeWebView"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "responseClipBoardText", "key_sogou_clipboard") }
-            )
-            hookResolvedMethod(
+            val flxWebViewRes = sharedFlxWebViewRes.value
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "flx_webview_loadUrlByJs",
                 cacheKey = "sogou.flx.FlxImeWebView#loadUrlByJs",
-                fastPath = { SymbolResolver.findDeclaredMethodOrNull(flxWebViewRes.value, "loadUrlByJs", String::class.java) },
+                classResult = flxWebViewRes,
+                methodName = "loadUrlByJs",
+                String::class.java,
+                returnType = "void",
                 hooker = voidNoOpHooker(ruleId)
             )
 
-            val deviceMRes = resolver.resolveClass(
-                cacheKey = "sogou.lib.device.m",
-                fastPathCandidates = listOf("com.sogou.lib.device.m"),
-                dexKitFinder = { dk -> findClassByStrings(dk, "socketwrapper", "doPostBatchReport: isPrivate: %b") }
-            )
-            hookResolvedMethod(
+            val deviceMRes = sharedDeviceMRes.value
+            hookMethodOnClass(
                 registry, resolver, stats, ruleId,
                 hookId = "device_m_webview_js",
                 cacheKey = "sogou.lib.device.m#l",
-                fastPath = {
-                    SymbolResolver.findDeclaredMethodOrNull(
-                        deviceMRes.value,
-                        "l",
-                        WebView::class.java,
-                        String::class.java
-                    )
-                },
+                classResult = deviceMRes,
+                methodName = "l",
+                WebView::class.java,
+                String::class.java,
+                returnType = "void",
                 hooker = XposedInterface.Hooker { chain ->
                     if (!isPointEnabled(ruleId)) return@Hooker chain.proceed()
                     val scriptOrUrl = chain.getArg(1) as? String
@@ -3110,7 +3431,7 @@ object SogouHookPack : ImeHookPack {
                                     StringMatchType.Contains
                                 )
                             )
-                    ).firstOrNull()?.descriptor
+                    ).singleOrNull()?.descriptor
                 }
             )
             hookClassMethodsByName(
@@ -3158,7 +3479,17 @@ object SogouHookPack : ImeHookPack {
                 cacheKey = "sogou.http.monitor.dns.b",
                 fastPathCandidates = listOf("com.sogou.http.monitor.dns.b"),
                 dexKitFinder = { dk ->
-                    findClassByStrings(dk, "get.sogou.com", "v2.get.sogou.com", "sec.sginput.qq.com")
+                    dk.findClass {
+                        searchPackages("com.sogou.http.monitor.dns")
+                        matcher {
+                            usingStrings(
+                                listOf("get.sogou.com", "v2.get.sogou.com", "sec.sginput.qq.com"),
+                                StringMatchType.Contains
+                            )
+                            addMethod { name("c", StringMatchType.Equals) }
+                            addMethod { name("l", StringMatchType.Equals) }
+                        }
+                    }.singleOrNull()?.descriptor
                 }
             )
             hookClassMethodsByName(
@@ -3189,21 +3520,18 @@ object SogouHookPack : ImeHookPack {
     // 8. sogou.ui.dual_skin_emoji
     // -------------------------------------------------------------------------
 
-    private fun installDualSkinEmojiRule(classLoader: ClassLoader, registry: HookRegistry) {
+    private fun installDualSkinEmojiRule(
+        classLoader: ClassLoader,
+        resolver: SymbolResolver,
+        registry: HookRegistry
+    ) {
         val ruleId = HookRuleCatalog.RULE_SOGOU_UI_DUAL_SKIN_EMOJI
         registry.installRuleIfEnabled(ruleId) {
             if (registry.processName != target.packageName) {
                 registry.reportSkipped(ruleId, "非主输入法进程 (${registry.processName})")
                 return@installRuleIfEnabled
             }
-            SogouDualSkinPopupHook.install(registry, classLoader)
-            registry.reportRule(
-                ruleId = ruleId,
-                status = HookMatchStatus.ACTIVE,
-                matchedMethod = "SogouDualSkinPopupHook#install",
-                source = ResolveSource.FAST_PATH.name,
-                detail = "DualSkinEmoji installed in ${registry.processName}"
-            )
+            SogouDualSkinPopupHook.install(registry, classLoader, resolver, ruleId)
         }
     }
 
@@ -3254,6 +3582,49 @@ object SogouHookPack : ImeHookPack {
     // Shared Hook Installation, Reflection & DexKit Helpers
     // -------------------------------------------------------------------------
 
+    private fun hookMethodOnClass(
+        registry: HookRegistry,
+        resolver: SymbolResolver,
+        stats: RuleStats,
+        ruleId: String,
+        hookId: String,
+        cacheKey: String,
+        classResult: ResolveResult<Class<*>>,
+        methodName: String,
+        vararg paramTypes: Class<*>,
+        returnType: String? = null,
+        primary: Boolean = false,
+        hooker: XposedInterface.Hooker
+    ) {
+        hookResolvedMethod(
+            registry = registry,
+            resolver = resolver,
+            stats = stats,
+            ruleId = ruleId,
+            hookId = hookId,
+            cacheKey = cacheKey,
+            fastPath = { SymbolResolver.findDeclaredMethodOrNull(classResult.value, methodName, *paramTypes) },
+            dexKitFinder = { dk ->
+                val cls = classResult.value ?: return@hookResolvedMethod null
+                val expectedParamNames = paramTypes.map { it.dexKitTypeName() }.toTypedArray()
+                dk.findMethod {
+                    searchPackages(cls.name.substringBeforeLast('.', ""))
+                    matcher {
+                        declaredClass(cls.name, StringMatchType.Equals)
+                        name(methodName, StringMatchType.Equals)
+                        if (returnType != null) returnType(returnType)
+                        if (expectedParamNames.isEmpty()) paramCount(0) else paramTypes(*expectedParamNames)
+                    }
+                }.singleOrNull()?.descriptor
+            },
+            primary = primary,
+            hooker = hooker
+        )
+    }
+
+    private fun Class<*>.dexKitTypeName(): String =
+        if (isArray) "${componentType!!.dexKitTypeName()}[]" else name
+
     private fun hookResolvedMethod(
         registry: HookRegistry,
         resolver: SymbolResolver,
@@ -3262,7 +3633,7 @@ object SogouHookPack : ImeHookPack {
         hookId: String,
         cacheKey: String,
         fastPath: (ClassLoader) -> Method?,
-        dexKitFinder: ((DexKitBridge) -> String?)? = null,
+        dexKitFinder: ((DexKitExecutor) -> String?)? = null,
         structuralFallback: ((ClassLoader) -> Method?)? = null,
         primary: Boolean = false,
         hooker: XposedInterface.Hooker
@@ -3367,16 +3738,16 @@ object SogouHookPack : ImeHookPack {
         }.getOrNull()
     }
 
-    private fun findClassByStrings(dk: DexKitBridge, vararg strings: String): String? {
+    private fun findClassByStrings(dk: DexKitExecutor, vararg strings: String): String? {
         return dk.findClass(
             FindClass.create()
                 .searchPackages(*SEARCH_PACKAGES)
                 .matcher(ClassMatcher.create().usingStrings(strings.toList(), StringMatchType.Contains))
-        ).firstOrNull()?.descriptor
+        ).singleOrNull()?.descriptor
     }
 
     private fun findMethodBy(
-        dk: DexKitBridge,
+        dk: DexKitExecutor,
         searchPackages: Array<String> = SEARCH_PACKAGES,
         returnType: String? = null,
         paramCount: Int? = null,
@@ -3392,7 +3763,7 @@ object SogouHookPack : ImeHookPack {
             FindMethod.create()
                 .searchPackages(*searchPackages)
                 .matcher(matcher)
-        ).firstOrNull()?.descriptor
+        ).singleOrNull()?.descriptor
     }
 
     private fun findField(clazz: Class<*>, name: String): Field? {

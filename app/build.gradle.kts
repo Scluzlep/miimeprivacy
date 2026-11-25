@@ -11,8 +11,8 @@ android {
         applicationId = "com.scluzlep.miimeprivacy"
         minSdk = 28
         targetSdk = 36
-        versionCode = System.getenv("MIIME_VERSION_CODE")?.toIntOrNull() ?: 2000001
-        versionName = System.getenv("MIIME_VERSION_NAME")?.takeIf { it.isNotBlank() } ?: "2.0"
+        versionCode = System.getenv("MIIME_VERSION_CODE")?.toIntOrNull() ?: 2001001
+        versionName = System.getenv("MIIME_VERSION_NAME")?.takeIf { it.isNotBlank() } ?: "2.1"
     }
 
     buildFeatures {
@@ -93,4 +93,5 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
+    testImplementation("io.github.libxposed:api:102.0.0")
 }

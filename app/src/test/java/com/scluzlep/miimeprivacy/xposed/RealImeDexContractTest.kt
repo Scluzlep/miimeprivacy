@@ -182,6 +182,18 @@ class RealImeDexContractTest {
         )
         assertAnchorStrings(ime, anchorContracts)
         assertAllSourceClassLiteralsExist(ime, "targets/XiaoAiHookPack.kt")
+
+        // Verify XiaoAiAnchors.FIELD_DEGRADE_STRICT matches real DEX field "c" (JADX renames it to f17039c)
+        assertTrue(
+            "Expected XiaoAiAnchors.FIELD_DEGRADE_STRICT == \"c\", got ${XiaoAiAnchors.FIELD_DEGRADE_STRICT}",
+            XiaoAiAnchors.FIELD_DEGRADE_STRICT == "c"
+        )
+        val degradeLevelSrc = readDecompiledClass(ime, XiaoAiAnchors.CLASS_DEGRADE_LEVEL)
+        assertTrue(
+            "Expected t7.e to contain JADX rename comment for '${XiaoAiAnchors.FIELD_DEGRADE_STRICT}' and STRICT",
+            degradeLevelSrc.contains("renamed from: ${XiaoAiAnchors.FIELD_DEGRADE_STRICT}") &&
+                degradeLevelSrc.contains("\"STRICT\"")
+        )
     }
 
     @Test
@@ -321,7 +333,18 @@ class RealImeDexContractTest {
             ClassContract("com.sogou.base.hotfix.b"),
             ClassContract("com.sogou.debug.b"),
             ClassContract("com.tencent.msdk.dns.MSDKDnsResolver", listOf("init", "WGSetDnsOpenId")),
-            ClassContract("com.sogou.http.monitor.dns.b", listOf("c", "l"))
+            ClassContract("com.sogou.http.monitor.dns.b", listOf("c", "l")),
+            ClassContract("com.sohu.inputmethod.beaconbridge.c\$a"),
+            ClassContract("com.sohu.inputmethod.internet.InternetConnection"),
+            ClassContract("com.sogou.threadpool.net.a"),
+            ClassContract(
+                "com.sogou.expressionplugin.ui.MoreColorEmojiPopupView",
+                listOf("setEmojiDrawable", "dealMoreColorCommitEmoji", "changeCurrentIndex")
+            ),
+            ClassContract(
+                "com.sogou.sogou_router_base.base_bean.BaseExpressionInfo",
+                listOf("canShowGroupEmojiAnnotation", "isWeiXinCandidate")
+            )
         )
         assertClassContracts(ime, classContracts)
 
@@ -385,10 +408,12 @@ class RealImeDexContractTest {
             "com.sogou.hotfix.patcher.InstallDex" to listOf("dexElements", "loadDexFile"),
             "com.sogou.base.hotfix.b" to listOf("HotFixManager", "rfix_patch_"),
             "com.sogou.debug.b" to listOf("debug_dex_local.jar", "DebugDex"),
-            "com.sogou.http.monitor.dns.b" to listOf("get.sogou.com", "v2.get.sogou.com", "sec.sginput.qq.com")
+            "com.sogou.http.monitor.dns.b" to listOf("get.sogou.com", "v2.get.sogou.com", "sec.sginput.qq.com"),
+            "com.sogou.expressionplugin.ui.MoreColorEmojiPopupView" to listOf("MoreColorEmojiPopupView", "_1F3FB")
         )
         assertAnchorStrings(ime, anchorContracts)
         assertAllSourceClassLiteralsExist(ime, "targets/SogouHookPack.kt")
+        assertAllSourceClassLiteralsExist(ime, "../emoji/SogouDualSkinPopupHook.kt")
     }
 
     @Test
@@ -409,7 +434,7 @@ class RealImeDexContractTest {
             ClassContract("n9.e"),
             ClassContract("q9.b", listOf("S")),
             ClassContract("n7.a"),
-            ClassContract("com.baidu.res.ImeCommonParam", listOf("uploadIdentifiers")),
+            ClassContract("com.baidu.util.ImeCommonParam", listOf("uploadIdentifiers")),
             ClassContract("v9.a", listOf("run")),
             ClassContract("wi0.a"),
             ClassContract("tk1.c"),
@@ -466,7 +491,7 @@ class RealImeDexContractTest {
             ClassContract("q30.f", listOf("run")),
             ClassContract("t40.b", listOf("a", "d")),
             ClassContract("lp0.c"),
-            ClassContract("com.baidu.res.ContactsUtils", listOf("getContactsByContent")),
+            ClassContract("com.baidu.util.ContactsUtils", listOf("getContactsByContent")),
             ClassContract("oj0.c", listOf("a")),
             ClassContract("v6.i", listOf("j")),
             ClassContract("rj0.b", listOf("b"), listOf("d")),
@@ -491,7 +516,10 @@ class RealImeDexContractTest {
             ClassContract("com.baidu.webkit.internal.daemon.HttpDnsCacheForHost", listOf("tryToUpdateHttpDnsCacheHost")),
             ClassContract("com.baidu.webkit.internal.blink.WebSettingsGlobalBlink", listOf("getHttpDnsUpdateEnabled")),
             ClassContract("com.baidu.turbonet.net.TurbonetEngine\$Builder", listOf("enableBaiduDns")),
-            ClassContract("com.baidu.turbonet.net.TurbonetConfig", listOf("enableBaiduDns"))
+            ClassContract("com.baidu.turbonet.net.TurbonetConfig", listOf("enableBaiduDns")),
+            ClassContract("com.baidu.stats.realtime.PagePVSourceEnum"),
+            ClassContract("com.baidu.sapi2.SapiWebView\$Command"),
+            ClassContract("com.baidu.talos.core.data.ParamMap")
         )
         assertClassContracts(ime, classContracts)
 
@@ -550,7 +578,7 @@ class RealImeDexContractTest {
             "q30.d" to listOf("content://sms/inbox-insert"),
             "q30.f" to listOf("content://sms/inbox"),
             "t40.b" to listOf("ContactCustomManager", "https://upl.baidu.com/words/add"),
-            "com.baidu.res.ContactsUtils" to listOf("ContactsUtils.java", "display_name", "data1"),
+            "com.baidu.util.ContactsUtils" to listOf("ContactsUtils.java", "display_name", "data1"),
             "oj0.c" to listOf("android.permission.READ_CONTACTS"),
             "v6.i" to listOf("display_name", "data1"),
             "rj0.b" to listOf("installinfo", "isinstalled", "shortcutinfo", "guiderinfo"),
@@ -567,6 +595,24 @@ class RealImeDexContractTest {
         )
         assertAnchorStrings(ime, anchorContracts)
         assertAllSourceClassLiteralsExist(ime, "targets/BaiduHookPack.kt")
+
+        val baiduPackFile = File(
+            codesourceRoot,
+            "app/src/main/java/com/scluzlep/miimeprivacy/xposed/targets/BaiduHookPack.kt"
+        )
+        val baiduCode = stripKotlinComments(baiduPackFile.readText())
+        assertFalse(
+            "BaiduHookPack.kt must NOT use JADX-renamed com.baidu.res.* in runtime code",
+            baiduCode.contains("com.baidu.res.")
+        )
+        assertTrue(
+            "BaiduHookPack.kt must use real DEX package com.baidu.util",
+            baiduCode.contains("\"com.baidu.util\"")
+        )
+        assertTrue(
+            "BaiduHookPack.kt must preserve real DEX package t6 for t6.a",
+            baiduCode.contains("\"t6\"")
+        )
     }
 
     private data class ClassContract(
@@ -619,7 +665,7 @@ class RealImeDexContractTest {
             Regex("""(?:loadClassOrNull|addInterface)\s*\(\s*"([a-zA-Z0-9_$.]+)""""),
             Regex("""fastPathCandidates\s*=\s*listOf\s*\(\s*"([a-zA-Z0-9_$.]+)""""),
             Regex("""className\s*=\s*"([a-zA-Z0-9_$.]+)""""),
-            Regex("""const val CLASS_[A-Z0-9_]+\s*=\s*"([a-zA-Z0-9_$.]+)"""")
+            Regex("""const val (?:CLASS_[A-Z0-9_]+|POPUP_CLASS|INFO_CLASS)\s*=\s*"([a-zA-Z0-9_$.]+)"""")
         )
         val discovered = linkedSetOf<String>()
         for (pattern in classLiteralPatterns) {
@@ -642,20 +688,29 @@ class RealImeDexContractTest {
         }
     }
 
+    private fun resolveJadxClassName(ime: String, className: String): String =
+        if (ime == "baidu" && className.startsWith("com.baidu.util.")) {
+            // JADX decompiler renames DEX package `com.baidu.util` -> `com.baidu.res`
+            "com.baidu.res." + className.removePrefix("com.baidu.util.")
+        } else {
+            className
+        }
+
     private fun assertClassExists(ime: String, className: String): String {
-        val directFile = File(decompiledRoot, "$ime/sources/${className.replace('.', '/')}.java")
+        val jadxClassName = resolveJadxClassName(ime, className)
+        val directFile = File(decompiledRoot, "$ime/sources/${jadxClassName.replace('.', '/')}.java")
         if (directFile.isFile) {
             return directFile.readText()
         }
-        val outer = className.substringBefore('$')
+        val outer = jadxClassName.substringBefore('$')
         val candidateFile = File(decompiledRoot, "$ime/sources/${outer.replace('.', '/')}.java")
         if (candidateFile.isFile) {
             val text = candidateFile.readText()
-            if (className.contains('$')) {
-                val innerSimple = className.substringAfterLast('$')
+            if (jadxClassName.contains('$')) {
+                val innerSimple = jadxClassName.substringAfterLast('$')
                 // Anonymous / JADX-hoisted inner classes are referenced or declared inside outer
                 assertTrue(
-                    "[$ime] Inner class $className not found in ${candidateFile.path}",
+                    "[$ime] Inner class $jadxClassName not found in ${candidateFile.path}",
                     text.contains(innerSimple)
                 )
             }
@@ -664,22 +719,23 @@ class RealImeDexContractTest {
         // D8 synthetic lambda classes (e.g. com.baidu.input.clipboard.b) are inlined into enclosing JADX file
         val packageDir = File(decompiledRoot, "$ime/sources/${outer.substringBeforeLast('.', "").replace('.', '/')}")
         if (packageDir.isDirectory) {
-            val marker = "from class: $className"
+            val marker = "from class: $jadxClassName"
             val inlined = packageDir.listFiles { f -> f.isFile && f.extension == "java" }
                 ?.firstOrNull { it.readText().contains(marker) }
             if (inlined != null) {
                 return inlined.readText()
             }
         }
-        throw AssertionError("[$ime] Missing decompiled class $className (checked ${directFile.path} and ${candidateFile.path})")
+        throw AssertionError("[$ime] Missing decompiled class $jadxClassName (checked ${directFile.path} and ${candidateFile.path})")
     }
 
     private fun readDecompiledClass(ime: String, className: String): String {
-        val directFile = File(decompiledRoot, "$ime/sources/${className.replace('.', '/')}.java")
+        val jadxClassName = resolveJadxClassName(ime, className)
+        val directFile = File(decompiledRoot, "$ime/sources/${jadxClassName.replace('.', '/')}.java")
         if (directFile.isFile) {
             return directFile.readText()
         }
-        return assertClassExists(ime, className)
+        return assertClassExists(ime, jadxClassName)
     }
 
     private fun stripKotlinComments(source: String): String {

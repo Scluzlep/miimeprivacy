@@ -98,7 +98,6 @@ fun RulesTab(
             allTargetRules
         } else {
             val imeNameMatched = target.displayName.lowercase().contains(trimmedQuery) ||
-                shortImeName(target).lowercase().contains(trimmedQuery) ||
                 target.packageName.lowercase().contains(trimmedQuery)
             if (imeNameMatched) {
                 allTargetRules
@@ -253,7 +252,6 @@ fun RulesTab(
                 if (targetExpanded) {
                     item(key = "ime_actions_${target.name}") {
                         ImeActionBar(
-                            target = target,
                             overview = overview,
                             allCategoriesExpanded = groupedCategories.all { (category, _) ->
                                 expandedCategories[categoryExpandKey(target, category)] == true
@@ -282,7 +280,6 @@ fun RulesTab(
 
                         item(key = "cat_header_${target.name}_${category.name}") {
                             CategorySectionHeader(
-                                target = target,
                                 category = category,
                                 activeCount = activeInCategory,
                                 totalCount = itemsInCategory.size,
@@ -320,12 +317,6 @@ fun RulesTab(
 
 private fun categoryExpandKey(target: ImeTarget, category: RuleCategory): String =
     "${target.name}:${category.name}"
-
-private fun shortImeName(target: ImeTarget): String = when (target) {
-    ImeTarget.SOGOU -> "搜狗"
-    ImeTarget.BAIDU -> "百度"
-    ImeTarget.XIAOAI -> "小爱"
-}
 
 private fun aggregateCategoryStatus(items: List<RuleDisplayItem>): HookMatchStatus {
     val statuses = items.map { it.effectiveStatus }
@@ -422,7 +413,6 @@ private fun ImeGroupHeaderCard(
 
 @Composable
 private fun ImeActionBar(
-    target: ImeTarget,
     overview: TargetRuleOverview,
     allCategoriesExpanded: Boolean,
     onToggleManaged: (Boolean) -> Unit,
@@ -448,7 +438,7 @@ private fun ImeActionBar(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = if (overview.managed) "已接管 ${shortImeName(target)}" else "暂停接管",
+                        text = if (overview.managed) "已接管" else "暂停接管",
                         style = MiuixTheme.textStyles.body2,
                         fontWeight = FontWeight.Medium,
                         color = if (overview.managed) colors.onSurfaceContainer else statusColors.warning
@@ -491,7 +481,6 @@ private fun ImeActionBar(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CategorySectionHeader(
-    target: ImeTarget,
     category: RuleCategory,
     activeCount: Int,
     totalCount: Int,
@@ -534,7 +523,7 @@ private fun CategorySectionHeader(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Text(
-                    text = "${shortImeName(target)} › ${ruleCategoryLabel(category)}",
+                    text = ruleCategoryLabel(category),
                     style = MiuixTheme.textStyles.body2,
                     fontWeight = FontWeight.SemiBold,
                     color = colors.onSurfaceContainer

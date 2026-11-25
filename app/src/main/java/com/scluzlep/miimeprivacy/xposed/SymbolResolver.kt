@@ -6,6 +6,9 @@ import android.content.pm.ApplicationInfo
 import com.scluzlep.miimeprivacy.config.ConfigContract
 import com.scluzlep.miimeprivacy.config.SymbolResolveMode
 import org.luckypray.dexkit.DexKitBridge
+import org.luckypray.dexkit.query.FindClass
+import org.luckypray.dexkit.query.FindField
+import org.luckypray.dexkit.query.FindMethod
 import org.luckypray.dexkit.util.DexSignUtil
 import org.luckypray.dexkit.wrap.DexClass
 import org.luckypray.dexkit.wrap.DexField
@@ -34,15 +37,124 @@ data class ResolveResult<T>(
     val isSuccess: Boolean get() = value != null
 }
 
+data class SymbolResolutionTrace(
+    val kind: String,
+    val cacheKey: String,
+    val source: ResolveSource,
+    val descriptor: String
+)
+
+data class DexTypeDescriptor(
+    val name: String,
+    val descriptor: String = ""
+)
+
+data class DexFieldDescriptor(
+    val descriptor: String,
+    val modifiers: Int,
+    val type: DexTypeDescriptor,
+    val name: String = "",
+    val declaredClassName: String = ""
+)
+
+data class DexUsingField(
+    val field: DexFieldDescriptor
+)
+
+class DexDescriptorResult(
+    val descriptor: String,
+    val className: String = "",
+    val name: String = className,
+    val declaredClassName: String = className,
+    private val usingFieldsProvider: () -> List<DexUsingField> = { emptyList() }
+) {
+    val usingFields: List<DexUsingField>
+        get() = usingFieldsProvider()
+}
+
+/**
+ * Abstraction over [DexKitBridge] query execution so production hooks use native DexKit while
+ * unit tests can plug in an APK-bytecode-backed [DexKitExecutor].
+ */
+interface DexKitExecutor : AutoCloseable {
+    fun findClass(query: FindClass): List<DexDescriptorResult>
+    fun findMethod(query: FindMethod): List<DexDescriptorResult>
+    fun findField(query: FindField): List<DexDescriptorResult>
+
+    override fun close() = Unit
+}
+
+inline fun DexKitExecutor.findClass(init: FindClass.() -> Unit): List<DexDescriptorResult> =
+    findClass(FindClass.create().apply(init))
+
+inline fun DexKitExecutor.findMethod(init: FindMethod.() -> Unit): List<DexDescriptorResult> =
+    findMethod(FindMethod.create().apply(init))
+
+inline fun DexKitExecutor.findField(init: FindField.() -> Unit): List<DexDescriptorResult> =
+    findField(FindField.create().apply(init))
+
+class BridgeDexKitExecutor(private val bridge: DexKitBridge) : DexKitExecutor {
+    override fun findClass(query: FindClass): List<DexDescriptorResult> =
+        bridge.findClass(query).map { cls ->
+            DexDescriptorResult(
+                descriptor = cls.descriptor,
+                className = cls.name,
+                name = cls.name,
+                declaredClassName = cls.name
+            )
+        }
+
+    override fun findMethod(query: FindMethod): List<DexDescriptorResult> =
+        bridge.findMethod(query).map { method ->
+            DexDescriptorResult(
+                descriptor = method.descriptor,
+                className = method.declaredClassName,
+                name = method.name,
+                declaredClassName = method.declaredClassName,
+                usingFieldsProvider = {
+                    method.usingFields.map { uf ->
+                        val f = uf.field
+                        DexUsingField(
+                            DexFieldDescriptor(
+                                descriptor = f.descriptor,
+                                modifiers = f.modifiers,
+                                type = DexTypeDescriptor(
+                                    name = f.type.name,
+                                    descriptor = f.type.descriptor
+                                ),
+                                name = f.name,
+                                declaredClassName = f.declaredClassName
+                            )
+                        )
+                    }
+                }
+            )
+        }
+
+    override fun findField(query: FindField): List<DexDescriptorResult> =
+        bridge.findField(query).map { field ->
+            DexDescriptorResult(
+                descriptor = field.descriptor,
+                className = field.declaredClassName,
+                name = field.name,
+                declaredClassName = field.declaredClassName
+            )
+        }
+
+    override fun close() {
+        runCatching { bridge.close() }
+    }
+}
+
 /**
  * 4-tier symbol resolver for hooked IMEs:
  * 1. FastPath direct reflection (zero I/O)
  * 2. Versioned SharedPreferences descriptor cache (`SYMBOL_CACHE_PREFS_NAME`)
- * 3. Lazy `DexKitBridge` (loads `libdexkit.so` from module `nativeLibraryDir` only on cache miss)
+ * 3. Lazy [DexKitExecutor] backed by `DexKitBridge` (loads `libdexkit.so` from module `nativeLibraryDir` only on cache miss)
  * 4. Structural fallback lambda
  *
- * When [resolveMode] is [SymbolResolveMode.DYNAMIC], targets with a `dexKitFinder` or
- * `structuralFallback` resolve via `Cache -> DexKit -> StructuralFallback -> FastPath`.
+ * When [resolveMode] is [SymbolResolveMode.DYNAMIC], resolution strictly uses
+ * `Cache -> DexKit -> StructuralFallback` and never falls back to FastPath.
  */
 class SymbolResolver(
     context: Context?,
@@ -52,7 +164,9 @@ class SymbolResolver(
     private val moduleNativeLibDir: String?,
     val resolveMode: SymbolResolveMode = SymbolResolveMode.AUTO,
     val requiredCacheResetAtMs: Long = 0L,
-    internal val prefsOverride: SharedPreferences? = null
+    internal val prefsOverride: SharedPreferences? = null,
+    internal val dexKitExecutorOverride: DexKitExecutor? = null,
+    internal val onResolveTrace: ((SymbolResolutionTrace) -> Unit)? = null
 ) : AutoCloseable {
 
     private val prefs: SharedPreferences? = prefsOverride ?: context?.let { ctx ->
@@ -68,12 +182,14 @@ class SymbolResolver(
     }
 
     @Volatile
-    private var bridge: DexKitBridge? = null
+    private var dexKitExecutor: DexKitExecutor? = dexKitExecutorOverride
 
     @Volatile
     private var bridgeInitAttempted: Boolean = false
 
     private fun <T> runResolutionOrder(
+        kind: String,
+        cacheKey: String,
         preferDynamic: Boolean,
         tryFastPath: () -> ResolveResult<T>?,
         tryCache: () -> ResolveResult<T>?,
@@ -81,26 +197,41 @@ class SymbolResolver(
         tryStructural: () -> ResolveResult<T>?
     ): ResolveResult<T> {
         val attempts = if (preferDynamic) {
-            listOf(tryCache, tryDexKit, tryStructural, tryFastPath)
+            listOf(tryCache, tryDexKit, tryStructural)
         } else {
             listOf(tryFastPath, tryCache, tryDexKit, tryStructural)
         }
+        var result: ResolveResult<T>? = null
         for (attempt in attempts) {
-            attempt()?.let { return it }
+            val candidate = attempt()
+            if (candidate != null) {
+                result = candidate
+                break
+            }
         }
-        return ResolveResult(null, ResolveSource.MISS)
+        val finalResult: ResolveResult<T> = result ?: ResolveResult(null, ResolveSource.MISS)
+        onResolveTrace?.invoke(
+            SymbolResolutionTrace(
+                kind = kind,
+                cacheKey = cacheKey,
+                source = finalResult.source,
+                descriptor = finalResult.descriptor
+            )
+        )
+        return finalResult
     }
 
     fun resolveClass(
         cacheKey: String,
         fastPathCandidates: List<String> = emptyList(),
-        dexKitFinder: ((DexKitBridge) -> String?)? = null,
+        dexKitFinder: ((DexKitExecutor) -> String?)? = null,
         structuralFallback: ((ClassLoader) -> Class<*>?)? = null
     ): ResolveResult<Class<*>> {
         val storageKey = buildCacheKey(versionCode, cacheKey)
-        val preferDynamic = resolveMode == SymbolResolveMode.DYNAMIC &&
-            (dexKitFinder != null || structuralFallback != null)
+        val preferDynamic = resolveMode == SymbolResolveMode.DYNAMIC
         return runResolutionOrder(
+            kind = "class",
+            cacheKey = cacheKey,
             preferDynamic = preferDynamic,
             tryFastPath = {
                 var fastResult: ResolveResult<Class<*>>? = null
@@ -128,8 +259,8 @@ class SymbolResolver(
                 if (dexKitFinder == null) {
                     null
                 } else {
-                    val dexBridge = getOrCreateBridge()
-                    val foundDescriptor = dexBridge?.let { runCatching { dexKitFinder(it) }.getOrNull() }
+                    val executor = getOrCreateExecutor()
+                    val foundDescriptor = executor?.let { runCatching { dexKitFinder(it) }.getOrNull() }
                     if (foundDescriptor.isNullOrBlank()) {
                         null
                     } else {
@@ -165,7 +296,7 @@ class SymbolResolver(
     fun resolveMethod(
         cacheKey: String,
         fastPath: ((ClassLoader) -> Method?)? = null,
-        dexKitFinder: ((DexKitBridge) -> String?)? = null,
+        dexKitFinder: ((DexKitExecutor) -> String?)? = null,
         structuralFallback: ((ClassLoader) -> Method?)? = null
     ): ResolveResult<Method> {
         val execResult = resolveExecutable(
@@ -185,13 +316,14 @@ class SymbolResolver(
     fun resolveExecutable(
         cacheKey: String,
         fastPath: ((ClassLoader) -> Executable?)? = null,
-        dexKitFinder: ((DexKitBridge) -> String?)? = null,
+        dexKitFinder: ((DexKitExecutor) -> String?)? = null,
         structuralFallback: ((ClassLoader) -> Executable?)? = null
     ): ResolveResult<Executable> {
         val storageKey = buildCacheKey(versionCode, cacheKey)
-        val preferDynamic = resolveMode == SymbolResolveMode.DYNAMIC &&
-            (dexKitFinder != null || structuralFallback != null)
+        val preferDynamic = resolveMode == SymbolResolveMode.DYNAMIC
         return runResolutionOrder(
+            kind = "executable",
+            cacheKey = cacheKey,
             preferDynamic = preferDynamic,
             tryFastPath = {
                 if (fastPath == null) {
@@ -219,8 +351,8 @@ class SymbolResolver(
                 if (dexKitFinder == null) {
                     null
                 } else {
-                    val dexBridge = getOrCreateBridge()
-                    val foundDescriptor = dexBridge?.let { runCatching { dexKitFinder(it) }.getOrNull() }
+                    val executor = getOrCreateExecutor()
+                    val foundDescriptor = executor?.let { runCatching { dexKitFinder(it) }.getOrNull() }
                     if (foundDescriptor.isNullOrBlank()) {
                         null
                     } else {
@@ -254,13 +386,14 @@ class SymbolResolver(
     fun resolveField(
         cacheKey: String,
         fastPath: ((ClassLoader) -> Field?)? = null,
-        dexKitFinder: ((DexKitBridge) -> String?)? = null,
+        dexKitFinder: ((DexKitExecutor) -> String?)? = null,
         structuralFallback: ((ClassLoader) -> Field?)? = null
     ): ResolveResult<Field> {
         val storageKey = buildCacheKey(versionCode, cacheKey)
-        val preferDynamic = resolveMode == SymbolResolveMode.DYNAMIC &&
-            (dexKitFinder != null || structuralFallback != null)
+        val preferDynamic = resolveMode == SymbolResolveMode.DYNAMIC
         return runResolutionOrder(
+            kind = "field",
+            cacheKey = cacheKey,
             preferDynamic = preferDynamic,
             tryFastPath = {
                 if (fastPath == null) {
@@ -292,8 +425,8 @@ class SymbolResolver(
                 if (dexKitFinder == null) {
                     null
                 } else {
-                    val dexBridge = getOrCreateBridge()
-                    val foundDescriptor = dexBridge?.let { runCatching { dexKitFinder(it) }.getOrNull() }
+                    val executor = getOrCreateExecutor()
+                    val foundDescriptor = executor?.let { runCatching { dexKitFinder(it) }.getOrNull() }
                     if (foundDescriptor.isNullOrBlank()) {
                         null
                     } else {
@@ -342,25 +475,31 @@ class SymbolResolver(
     }
 
     @Synchronized
-    private fun getOrCreateBridge(): DexKitBridge? {
-        bridge?.let { return it }
+    private fun getOrCreateExecutor(): DexKitExecutor? {
+        dexKitExecutor?.let { return it }
         if (bridgeInitAttempted) return null
         bridgeInitAttempted = true
         val sourceDir = appInfo.sourceDir
         if (sourceDir.isNullOrBlank()) return null
         if (!ensureDexKitNativeLoaded(moduleNativeLibDir)) return null
         return runCatching {
-            DexKitBridge.create(sourceDir).also { created ->
-                created.setThreadNum(2)
-                bridge = created
+            BridgeDexKitExecutor(
+                DexKitBridge.create(sourceDir).also { created ->
+                    created.setThreadNum(2)
+                }
+            ).also { created ->
+                dexKitExecutor = created
             }
         }.getOrNull()
     }
 
     @Synchronized
     override fun close() {
-        runCatching { bridge?.close() }
-        bridge = null
+        val current = dexKitExecutor
+        if (current != null && current !== dexKitExecutorOverride) {
+            runCatching { current.close() }
+        }
+        dexKitExecutor = null
     }
 
     companion object {

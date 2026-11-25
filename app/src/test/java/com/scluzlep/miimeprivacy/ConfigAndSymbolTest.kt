@@ -16,9 +16,17 @@ import com.scluzlep.miimeprivacy.model.ImeRuntimeDiagnostics
 import com.scluzlep.miimeprivacy.model.ImeTarget
 import com.scluzlep.miimeprivacy.model.RuleCategory
 import com.scluzlep.miimeprivacy.xposed.ConfigBridge
+import com.scluzlep.miimeprivacy.xposed.DexDescriptorResult
+import com.scluzlep.miimeprivacy.xposed.DexKitExecutor
 import com.scluzlep.miimeprivacy.xposed.HookRegistry
 import com.scluzlep.miimeprivacy.xposed.ResolveSource
+import com.scluzlep.miimeprivacy.xposed.SymbolResolutionTrace
 import com.scluzlep.miimeprivacy.xposed.SymbolResolver
+import org.luckypray.dexkit.query.FindClass
+import org.luckypray.dexkit.query.FindField
+import org.luckypray.dexkit.query.FindMethod
+import org.luckypray.dexkit.wrap.DexClass
+import org.luckypray.dexkit.wrap.DexField
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -485,7 +493,31 @@ class ConfigAndSymbolTest {
             assertEquals(ResolveSource.FAST_PATH, fastMethod.source)
         }
 
-        // Dynamic mode uses Cache -> (DexKit) -> StructuralFallback -> FastPath, populates cache on fallback
+        // Dynamic mode strictly skips FastPath: Cache -> DexKit -> StructuralFallback
+        val fakeExecutor = object : DexKitExecutor {
+            override fun findClass(query: FindClass): List<DexDescriptorResult> =
+                listOf(DexDescriptorResult(DexClass(SampleTarget::class.java).toString(), SampleTarget::class.java.name))
+
+            override fun findMethod(query: FindMethod): List<DexDescriptorResult> =
+                listOf(
+                    DexDescriptorResult(
+                        SymbolResolver.executableToDescriptor(
+                            SampleTarget::class.java.getDeclaredMethod("hello", String::class.java, Int::class.javaPrimitiveType)
+                        ),
+                        SampleTarget::class.java.name
+                    )
+                )
+
+            override fun findField(query: FindField): List<DexDescriptorResult> =
+                listOf(
+                    DexDescriptorResult(
+                        DexField(SampleTarget::class.java.getDeclaredField("label")).toString(),
+                        SampleTarget::class.java.name
+                    )
+                )
+        }
+
+        val traces = mutableListOf<SymbolResolutionTrace>()
         val dynamicResolver = SymbolResolver(
             context = null,
             classLoader = loader,
@@ -494,46 +526,87 @@ class ConfigAndSymbolTest {
             moduleNativeLibDir = null,
             resolveMode = SymbolResolveMode.DYNAMIC,
             requiredCacheResetAtMs = 5000L,
-            prefsOverride = prefs
+            prefsOverride = prefs,
+            dexKitExecutorOverride = fakeExecutor,
+            onResolveTrace = { traces.add(it) }
         )
         dynamicResolver.use { resolver ->
-            val clsRes1 = resolver.resolveClass(
-                cacheKey = "sample.cls",
+            // FastPath-only targets MUST return MISS in DYNAMIC mode (never FAST_PATH)
+            val fastOnlyCls = resolver.resolveClass(
+                cacheKey = "sample.fast_only_cls",
+                fastPathCandidates = listOf(SampleTarget::class.java.name)
+            )
+            assertEquals(ResolveSource.MISS, fastOnlyCls.source)
+            assertNull(fastOnlyCls.value)
+
+            val fastOnlyMethod = resolver.resolveMethod(
+                cacheKey = "sample.fast_only_method",
+                fastPath = { SampleTarget::class.java.getDeclaredMethod("hello", String::class.java, Int::class.javaPrimitiveType) }
+            )
+            assertEquals(ResolveSource.MISS, fastOnlyMethod.source)
+            assertNull(fastOnlyMethod.value)
+
+            val fastOnlyField = resolver.resolveField(
+                cacheKey = "sample.fast_only_field",
+                fastPath = { SampleTarget::class.java.getDeclaredField("label") }
+            )
+            assertEquals(ResolveSource.MISS, fastOnlyField.source)
+            assertNull(fastOnlyField.value)
+
+            // DexKit hit resolves via DEXKIT (never FAST_PATH) and populates cache
+            val dexKitCls = resolver.resolveClass(
+                cacheKey = "sample.dexkit_cls",
                 fastPathCandidates = listOf(SampleTarget::class.java.name),
+                dexKitFinder = { dk -> dk.findClass(FindClass.create()).firstOrNull()?.descriptor },
                 structuralFallback = { SampleTarget::class.java }
             )
-            assertEquals(ResolveSource.STRUCTURAL_FALLBACK, clsRes1.source)
+            assertEquals(ResolveSource.DEXKIT, dexKitCls.source)
+            assertEquals(SampleTarget::class.java, dexKitCls.value)
             assertEquals(1, SymbolResolver.countCachedSymbols(prefs))
 
-            val methodRes1 = resolver.resolveMethod(
-                cacheKey = "sample.hello",
+            val dexKitMethod = resolver.resolveMethod(
+                cacheKey = "sample.dexkit_hello",
                 fastPath = { SampleTarget::class.java.getDeclaredMethod("hello", String::class.java, Int::class.javaPrimitiveType) },
+                dexKitFinder = { dk -> dk.findMethod(FindMethod.create()).firstOrNull()?.descriptor },
                 structuralFallback = { SampleTarget::class.java.getDeclaredMethod("hello", String::class.java, Int::class.javaPrimitiveType) }
             )
-            assertEquals(ResolveSource.STRUCTURAL_FALLBACK, methodRes1.source)
+            assertEquals(ResolveSource.DEXKIT, dexKitMethod.source)
             assertEquals(2, SymbolResolver.countCachedSymbols(prefs))
 
-            // Second lookup hits CACHE ahead of FastPath/Fallback
-            val clsRes2 = resolver.resolveClass(
-                cacheKey = "sample.cls",
+            // StructuralFallback runs when DexKit misses, still skipping FastPath
+            val fallbackCls = resolver.resolveClass(
+                cacheKey = "sample.fallback_cls",
                 fastPathCandidates = listOf(SampleTarget::class.java.name),
+                dexKitFinder = { null },
                 structuralFallback = { SampleTarget::class.java }
             )
-            val methodRes2 = resolver.resolveMethod(
-                cacheKey = "sample.hello",
-                fastPath = { SampleTarget::class.java.getDeclaredMethod("hello", String::class.java, Int::class.javaPrimitiveType) },
-                structuralFallback = { SampleTarget::class.java.getDeclaredMethod("hello", String::class.java, Int::class.javaPrimitiveType) }
+            assertEquals(ResolveSource.STRUCTURAL_FALLBACK, fallbackCls.source)
+            assertEquals(3, SymbolResolver.countCachedSymbols(prefs))
+
+            // Subsequent lookups hit CACHE
+            val cachedCls = resolver.resolveClass(
+                cacheKey = "sample.dexkit_cls",
+                fastPathCandidates = listOf(SampleTarget::class.java.name),
+                dexKitFinder = { dk -> dk.findClass(FindClass.create()).firstOrNull()?.descriptor }
             )
-            assertEquals(ResolveSource.CACHE, clsRes2.source)
-            assertEquals(ResolveSource.CACHE, methodRes2.source)
+            val cachedMethod = resolver.resolveMethod(
+                cacheKey = "sample.dexkit_hello",
+                fastPath = { SampleTarget::class.java.getDeclaredMethod("hello", String::class.java, Int::class.javaPrimitiveType) },
+                dexKitFinder = { dk -> dk.findMethod(FindMethod.create()).firstOrNull()?.descriptor }
+            )
+            assertEquals(ResolveSource.CACHE, cachedCls.source)
+            assertEquals(ResolveSource.CACHE, cachedMethod.source)
+            assertTrue(traces.any { it.kind == "class" && it.cacheKey == "sample.dexkit_cls" && it.source == ResolveSource.DEXKIT })
+            assertTrue(traces.any { it.kind == "executable" && it.cacheKey == "sample.dexkit_hello" && it.source == ResolveSource.DEXKIT })
+            assertTrue(traces.any { it.kind == "field" && it.cacheKey == "sample.fast_only_field" && it.source == ResolveSource.MISS })
 
             // No-op when same resetAtMs already applied
             assertFalse(SymbolResolver.applyPendingResetIfNeeded(prefs, 5000L))
-            assertEquals(2, SymbolResolver.countCachedSymbols(prefs))
+            assertEquals(3, SymbolResolver.countCachedSymbols(prefs))
 
             // Clear cache removes v* entries and advances applied reset timestamp
             val removed = SymbolResolver.clearCacheNow(prefs, 9000L)
-            assertEquals(2, removed)
+            assertEquals(3, removed)
             assertEquals(0, SymbolResolver.countCachedSymbols(prefs))
             assertEquals(9000L, prefs.getLong(SymbolResolver.KEY_APPLIED_RESET_AT_MS, 0L))
         }

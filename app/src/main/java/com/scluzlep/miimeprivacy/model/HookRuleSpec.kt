@@ -317,7 +317,7 @@ object HookRuleCatalog {
             ruleId = RULE_SOGOU_CONTEXT_HOST_PACKAGE,
             target = ImeTarget.SOGOU,
             title = "隐藏前台应用包名",
-            description = "不向搜狗云端接口传递当前宿主应用包名",
+            description = "不向云端接口传递当前宿主应用包名",
             category = RuleCategory.CONTEXT_STRIP,
             defaultEnabled = true,
             legacySwitchKey = PrivacyConfig.KEY_MASK_HOST_PACKAGE
@@ -503,7 +503,7 @@ object HookRuleCatalog {
             ruleId = RULE_BAIDU_TELEMETRY_PERIODIC_UBC_MOBSTAT,
             target = ImeTarget.BAIDU,
             title = "周期统计与移动分析拦截",
-            description = "拦截 UBC 周期回传与百度移动统计上报",
+            description = "拦截 UBC 周期回传与移动统计上报",
             category = RuleCategory.TELEMETRY,
             defaultEnabled = true,
             legacySwitchKey = PrivacyConfig.KEY_BLOCK_TELEMETRY
@@ -559,7 +559,7 @@ object HookRuleCatalog {
             ruleId = RULE_BAIDU_CONTEXT_HOST_PACKAGE,
             target = ImeTarget.BAIDU,
             title = "隐藏前台应用包名",
-            description = "禁止向百度云端接口传递当前宿主应用包名",
+            description = "禁止向云端接口传递当前宿主应用包名",
             category = RuleCategory.CONTEXT_STRIP,
             defaultEnabled = true,
             legacySwitchKey = PrivacyConfig.KEY_MASK_HOST_PACKAGE
@@ -658,7 +658,7 @@ object HookRuleCatalog {
             ruleId = RULE_BAIDU_NET_HTTPDNS,
             target = ImeTarget.BAIDU,
             title = "HTTPDNS 直连拦截",
-            description = "默认关闭，禁止绕过系统 DNS 直连百度解析",
+            description = "默认关闭，禁止绕过系统 DNS 直连解析",
             category = RuleCategory.DYNAMIC_AND_NET,
             defaultEnabled = false,
             legacySwitchKey = PrivacyConfig.KEY_BLOCK_HTTP_DNS
@@ -718,7 +718,7 @@ object HookRuleCatalog {
             ruleId = RULE_XIAOAI_TELEMETRY_ONETRACK,
             target = ImeTarget.XIAOAI,
             title = "OneTrack 拦截",
-            description = "阻断小米 OneTrack 行为埋点与事件上报",
+            description = "阻断 OneTrack 行为埋点与事件上报",
             category = RuleCategory.TELEMETRY,
             defaultEnabled = true,
             critical = true,
@@ -765,7 +765,7 @@ object HookRuleCatalog {
             ruleId = RULE_XIAOAI_CLOUD_SCREEN_CAPTURE,
             target = ImeTarget.XIAOAI,
             title = "截屏识别转发拦截",
-            description = "阻断小爱输入法后台截屏与屏幕内容转发",
+            description = "阻断输入法后台截屏与屏幕内容转发",
             category = RuleCategory.CLOUD_PRIVACY,
             defaultEnabled = true,
             legacySwitchKey = PrivacyConfig.KEY_SANITIZE_CLOUD_PAYLOAD
@@ -801,7 +801,7 @@ object HookRuleCatalog {
             ruleId = RULE_XIAOAI_CLOUD_VOICEASSIST_LAUNCH,
             target = ImeTarget.XIAOAI,
             title = "禁止拉起语音助手",
-            description = "默认关闭，阻止输入法跨进程拉起小爱语音",
+            description = "默认关闭，阻止输入法跨进程拉起语音助手",
             category = RuleCategory.CLOUD_PRIVACY,
             defaultEnabled = false,
             legacySwitchKey = null

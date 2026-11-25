@@ -14,14 +14,17 @@ import com.scluzlep.miimeprivacy.model.HookMatchStatus
 import com.scluzlep.miimeprivacy.model.HookRuleCatalog
 import com.scluzlep.miimeprivacy.model.ImeTarget
 import com.scluzlep.miimeprivacy.xposed.ConfigBridge
+import com.scluzlep.miimeprivacy.xposed.DexKitExecutor
 import com.scluzlep.miimeprivacy.xposed.HookRegistry
 import com.scluzlep.miimeprivacy.xposed.ImeHookPack
 import com.scluzlep.miimeprivacy.xposed.ImePackInstallResult
 import com.scluzlep.miimeprivacy.xposed.ResolveResult
+import com.scluzlep.miimeprivacy.xposed.ResolveSource
 import com.scluzlep.miimeprivacy.xposed.SymbolResolver
-import org.luckypray.dexkit.DexKitBridge
 import org.luckypray.dexkit.query.FindClass
+import org.luckypray.dexkit.query.FindField
 import org.luckypray.dexkit.query.FindMethod
+import org.luckypray.dexkit.query.enums.StringMatchType
 import org.luckypray.dexkit.query.matchers.ClassMatcher
 import org.luckypray.dexkit.query.matchers.MethodMatcher
 import java.io.IOException
@@ -54,7 +57,7 @@ internal object XiaoAiAnchors {
     val CTA_RESULT_STRINGS = listOf("CTA missing required info")
 
     const val CLASS_DEGRADE_LEVEL = "t7.e"
-    const val FIELD_DEGRADE_STRICT = "f17039c"
+    const val FIELD_DEGRADE_STRICT = "c"
     val DEGRADE_HELPER_STRINGS = listOf("Degraded mode(", "runtime-only")
 
     const val CLASS_SENSOR_ANTIHOOK_HELPER = "xc.i"
@@ -267,27 +270,31 @@ object XiaoAiHookPack : ImeHookPack {
             .filterNot { it.ruleId == HookRuleCatalog.RULE_XIAOAI_OVERLAY_PILL }
 
         registry.createSymbolResolver(classLoader).use { resolver ->
+            val imeServiceClass = resolveImeServiceClass(resolver)
+            val baseImpClass = resolveOneTrackBaseImpClass(resolver)
+            val unitSingleton = resolveKotlinUnitInstance(resolver, classLoader)
+
             runSafely(registry, "Gate rules (CTA fail-open & unlock degrade)") {
                 installCtaFailOpenGate(classLoader, resolver, registry)
-                installUnlockDegradeBypassHook(classLoader, resolver, registry)
+                installUnlockDegradeBypassHook(classLoader, resolver, registry, imeServiceClass)
             }
             runSafely(registry, "Identity & anti-hook rules") {
                 installAntiHookAndSecReportHooks(classLoader, resolver, registry)
-                installOaidInsidPhoneNumHooks(classLoader, resolver, registry)
+                installOaidInsidPhoneNumHooks(classLoader, resolver, registry, baseImpClass)
             }
             runSafely(registry, "Telemetry rules (OneTrack, Session, Taiyi/Jank, Bugreport/XCrash)") {
-                installTelemetryHooks(classLoader, resolver, registry)
+                installTelemetryHooks(classLoader, resolver, registry, imeServiceClass, baseImpClass)
             }
             runSafely(registry, "Cloud AI & DictPack & VoiceAssist rules") {
-                installCloudAndIpcHooks(classLoader, resolver, registry)
+                installCloudAndIpcHooks(classLoader, resolver, registry, imeServiceClass)
             }
             runSafely(registry, "Context strip & Clipboard & Hotword rules") {
-                installTopActivityAndPkgHooks(classLoader, resolver, registry)
+                installTopActivityAndPkgHooks(classLoader, resolver, registry, imeServiceClass)
                 installClipboardPrivacyHooks(classLoader, resolver, registry)
-                installHotwordAicrHooks(classLoader, resolver, registry)
+                installHotwordAicrHooks(classLoader, resolver, registry, unitSingleton)
             }
             runSafely(registry, "System cloud control rule") {
-                installSystemCloudControlHooks(classLoader, resolver, registry)
+                installSystemCloudControlHooks(classLoader, resolver, registry, unitSingleton)
             }
         }
 
@@ -426,7 +433,8 @@ object XiaoAiHookPack : ImeHookPack {
     private fun installUnlockDegradeBypassHook(
         classLoader: ClassLoader,
         resolver: SymbolResolver,
-        registry: HookRegistry
+        registry: HookRegistry,
+        imeServiceClass: Class<*>?
     ) {
         val ruleId = HookRuleCatalog.RULE_XIAOAI_GATE_UNLOCK_DEGRADE_BYPASS
         val helperClass = resolver.resolveClass(
@@ -434,14 +442,18 @@ object XiaoAiHookPack : ImeHookPack {
             fastPathCandidates = listOf(XiaoAiAnchors.CLASS_VOICEASSIST_LAUNCH),
             dexKitFinder = { bridge -> findClassDescriptorByStrings(bridge, XiaoAiAnchors.DEGRADE_HELPER_STRINGS) }
         ).value
-        val imeServiceClass = resolver.resolveClass(
-            cacheKey = "xiaoai.ime_service_cls",
-            fastPathCandidates = listOf(XiaoAiAnchors.CLASS_MI_IME_SERVICE)
-        ).value
         val degradeEnumClass = resolver.resolveClass(
             cacheKey = "xiaoai.degrade_level_cls",
             fastPathCandidates = listOf(XiaoAiAnchors.CLASS_DEGRADE_LEVEL),
-            dexKitFinder = { bridge -> findClassDescriptorByStrings(bridge, listOf("STRICT", "CTA", "NONE")) }
+            dexKitFinder = { bridge ->
+                bridge.findClass(
+                    FindClass.create().matcher(
+                        ClassMatcher.create()
+                            .superClass("java.lang.Enum")
+                            .usingStrings(listOf("STRICT", "CTA", "NONE"))
+                    )
+                ).singleOrNull()?.descriptor
+            }
         ).value
 
         val degradeEvalMethod = resolveMethodOnClass(
@@ -471,11 +483,38 @@ object XiaoAiHookPack : ImeHookPack {
         )
 
         val resolvedEnumClass = degradeEvalMethod.value?.returnType ?: degradeEnumClass
-        val strictValue: Any? = runCatching {
-            val field = resolvedEnumClass?.getDeclaredField(XiaoAiAnchors.FIELD_DEGRADE_STRICT)?.apply {
-                isAccessible = true
+        val strictFieldRes = resolver.resolveField(
+            cacheKey = "xiaoai.degrade_strict_field",
+            fastPath = { _ ->
+                resolvedEnumClass?.let { cls ->
+                    runCatching {
+                        cls.getDeclaredField(XiaoAiAnchors.FIELD_DEGRADE_STRICT).apply { isAccessible = true }
+                    }.getOrNull()
+                }
+            },
+            dexKitFinder = { bridge ->
+                val cls = resolvedEnumClass ?: return@resolveField null
+                val imeCls = imeServiceClass ?: return@resolveField null
+                bridge.findMethod(
+                    FindMethod.create().matcher(
+                        MethodMatcher.create()
+                            .declaredClass(imeCls.name)
+                            .name("isKeyboardEnglishOnly\$app_iflytekFullRelease")
+                            .paramCount(0)
+                    )
+                ).singleOrNull()
+                    ?.usingFields
+                    ?.map { it.field }
+                    ?.singleOrNull {
+                        it.declaredClassName == cls.name &&
+                            it.type.name == cls.name &&
+                            Modifier.isStatic(it.modifiers)
+                    }
+                    ?.descriptor
             }
-            field?.get(null) ?: resolvedEnumClass?.enumConstants?.lastOrNull()
+        )
+        val strictValue: Any? = runCatching {
+            strictFieldRes.value?.get(null) ?: resolvedEnumClass?.enumConstants?.lastOrNull()
         }.getOrNull()
 
         registry.hookExecutable(ruleId, "unlock_degrade_bypass", degradeEvalMethod) { chain ->
@@ -611,7 +650,10 @@ object XiaoAiHookPack : ImeHookPack {
             dexKitMatcher = { cls ->
                 MethodMatcher.create()
                     .declaredClass(cls.name)
+                    .name("report")
+                    .modifiers(Modifier.PUBLIC)
                     .paramTypes(Context::class.java, Int::class.javaPrimitiveType!!, String::class.java, String::class.java)
+                    .returnType(Void.TYPE)
             },
             structuralFallback = { cls ->
                 safeDeclaredMethods(cls).firstOrNull { method ->
@@ -645,7 +687,16 @@ object XiaoAiHookPack : ImeHookPack {
         ).value
         val pdTypeClass = resolver.resolveClass(
             cacheKey = "xiaoai.privacy_data_type",
-            fastPathCandidates = listOf(XiaoAiAnchors.CLASS_PRIVACY_DATA_TYPE)
+            fastPathCandidates = listOf(XiaoAiAnchors.CLASS_PRIVACY_DATA_TYPE),
+            dexKitFinder = { bridge ->
+                bridge.findClass(
+                    FindClass.create().matcher(
+                        ClassMatcher.create()
+                            .superClass("java.lang.Enum")
+                            .usingStrings(listOf("miui_device_id", "line_1_number", "configured_ssids", "sim_in_service"))
+                    )
+                ).singleOrNull()?.descriptor
+            }
         ).value
 
         val methodsToHook = mutableListOf<Pair<String, ResolveResult<Method>>>()
@@ -718,7 +769,8 @@ object XiaoAiHookPack : ImeHookPack {
     private fun installOaidInsidPhoneNumHooks(
         classLoader: ClassLoader,
         resolver: SymbolResolver,
-        registry: HookRegistry
+        registry: HookRegistry,
+        baseImpClass: Class<*>?
     ) {
         val ruleId = HookRuleCatalog.RULE_XIAOAI_ID_OAID_INSID_PHONENUM
 
@@ -788,7 +840,10 @@ object XiaoAiHookPack : ImeHookPack {
             resolver, classLoader, "xiaoai.onetrack_insid_get", insIdHelperClass, "b",
             emptyArray(),
             dexKitMatcher = { cls ->
-                MethodMatcher.create().declaredClass(cls.name).paramCount(0).returnType(String::class.java)
+                MethodMatcher.create().declaredClass(cls.name)
+                    .modifiers(Modifier.PUBLIC)
+                    .paramCount(0)
+                    .returnType(String::class.java)
             },
             structuralFallback = { cls ->
                 safeDeclaredMethods(cls).firstOrNull { method ->
@@ -839,11 +894,6 @@ object XiaoAiHookPack : ImeHookPack {
         }
 
         // 5. BaseOneTrackImp c#{c(Context), d(Context), e()} (OAID, AndroidId, InstanceId)
-        val baseImpClass = resolver.resolveClass(
-            cacheKey = "xiaoai.onetrack_base_imp",
-            fastPathCandidates = listOf(XiaoAiAnchors.CLASS_ONETRACK_BASE_IMP),
-            dexKitFinder = { bridge -> findClassDescriptorByStrings(bridge, XiaoAiAnchors.ONETRACK_BASE_IMP_STRINGS) }
-        ).value
         for ((suffix, name, params) in listOf(
             Triple("base_oaid", "c", arrayOf<Class<*>>(Context::class.java)),
             Triple("base_androidid", "d", arrayOf<Class<*>>(Context::class.java)),
@@ -878,26 +928,111 @@ object XiaoAiHookPack : ImeHookPack {
     private fun installTelemetryHooks(
         classLoader: ClassLoader,
         resolver: SymbolResolver,
-        registry: HookRegistry
+        registry: HookRegistry,
+        imeServiceClass: Class<*>?,
+        baseImpClass: Class<*>?
     ) {
         val collectorClass = resolver.resolveClass(
             cacheKey = "xiaoai.session_collector",
             fastPathCandidates = listOf(XiaoAiAnchors.CLASS_SESSION_COLLECTOR),
             dexKitFinder = { bridge -> findClassDescriptorByStrings(bridge, XiaoAiAnchors.SESSION_COLLECTOR_STRINGS) }
         ).value
-        val holderField = findSessionHolderField(collectorClass)
-        val holderClass = holderField?.type
-            ?: resolver.resolveClass(
-                cacheKey = "xiaoai.session_holder",
-                fastPathCandidates = listOf(XiaoAiAnchors.CLASS_SESSION_HOLDER),
-                dexKitFinder = { bridge -> findClassDescriptorByStrings(bridge, XiaoAiAnchors.SESSION_HOLDER_STRINGS) }
-            ).value
-        val sessionAccess = SessionAccessHelper(holderField, holderClass)
+        val holderClass = resolver.resolveClass(
+            cacheKey = "xiaoai.session_holder",
+            fastPathCandidates = listOf(XiaoAiAnchors.CLASS_SESSION_HOLDER),
+            dexKitFinder = { bridge ->
+                bridge.findClass(
+                    FindClass.create().matcher(
+                        ClassMatcher.create()
+                            .usingStrings(XiaoAiAnchors.SESSION_HOLDER_STRINGS + "keys(...)", StringMatchType.Equals)
+                            .interfaces { count(0) }
+                            .methods { add { paramTypes(org.json.JSONObject::class.java) } }
+                    )
+                ).singleOrNull()?.descriptor
+            }
+        ).value
+        val holderField = resolver.resolveField(
+            cacheKey = "xiaoai.session_holder_field",
+            fastPath = { _ -> findSessionHolderField(collectorClass) },
+            dexKitFinder = { bridge ->
+                val cls = collectorClass ?: return@resolveField null
+                val hCls = holderClass ?: return@resolveField null
+                bridge.findField(
+                    FindField.create().matcher(
+                        org.luckypray.dexkit.query.matchers.FieldMatcher.create()
+                            .declaredClass(cls.name)
+                            .type(hCls.name)
+                            .modifiers(Modifier.STATIC or Modifier.FINAL)
+                    )
+                ).singleOrNull()?.descriptor
+            }
+        ).value
+        val passwordField = resolver.resolveField(
+            cacheKey = "xiaoai.session_password_field",
+            fastPath = { _ ->
+                holderClass?.let { cls ->
+                    runCatching {
+                        cls.getDeclaredField(XiaoAiAnchors.FIELD_SESSION_PASSWORD).takeIf {
+                            it.type == Boolean::class.javaPrimitiveType && !Modifier.isStatic(it.modifiers)
+                        }?.apply { isAccessible = true }
+                    }.getOrNull()
+                }
+            },
+            dexKitFinder = { bridge ->
+                val cCls = collectorClass ?: return@resolveField null
+                val hCls = holderClass ?: return@resolveField null
+                val nonPasswordDescs = bridge.findMethod(
+                    FindMethod.create().matcher(
+                        MethodMatcher.create()
+                            .declaredClass(cCls.name)
+                            .usingStrings("duration_s")
+                    )
+                ).singleOrNull()
+                    ?.usingFields
+                    ?.map { it.field }
+                    ?.filter { it.declaredClassName == hCls.name && it.type.name == "boolean" }
+                    ?.mapTo(HashSet()) { it.descriptor }
+                    ?: emptySet()
+                bridge.findMethod(
+                    FindMethod.create().matcher(
+                        MethodMatcher.create()
+                            .declaredClass(cCls.name)
+                            .usingStrings("source_app")
+                    )
+                ).singleOrNull()
+                    ?.usingFields
+                    ?.map { it.field }
+                    ?.singleOrNull {
+                        it.declaredClassName == hCls.name &&
+                            it.type.name == "boolean" &&
+                            it.descriptor !in nonPasswordDescs
+                    }
+                    ?.descriptor
+            }
+        ).value
+        val sessionAccess = SessionAccessHelper(holderField, holderClass, passwordField)
+        val sdkClass = resolver.resolveClass(
+            cacheKey = "xiaoai.onetrack_sdk",
+            fastPathCandidates = listOf(XiaoAiAnchors.CLASS_ONETRACK_SDK),
+            dexKitFinder = { bridge ->
+                bridge.findClass(
+                    FindClass.create().matcher(
+                        ClassMatcher.create()
+                            .usingStrings(listOf("context is null!"), StringMatchType.Equals)
+                            .methods {
+                                add { name(XiaoAiAnchors.METHOD_ONETRACK_SET_NET) }
+                                add { name("track"); paramCount(2) }
+                                add { name("trackEventFromH5"); paramCount(1) }
+                            }
+                    )
+                ).singleOrNull()?.descriptor
+            }
+        ).value
 
-        installOneTrackSdkHooks(classLoader, resolver, registry, sessionAccess)
-        installOneTrackHelperHooks(classLoader, resolver, registry, sessionAccess)
-        installOneTrackBaseAndIpcHooks(classLoader, resolver, registry, sessionAccess)
-        installSessionActionAndTypingHooks(classLoader, resolver, registry, collectorClass, holderClass, sessionAccess)
+        installOneTrackSdkHooks(classLoader, resolver, registry, sessionAccess, sdkClass)
+        installOneTrackHelperHooks(classLoader, resolver, registry, sessionAccess, sdkClass)
+        installOneTrackBaseAndIpcHooks(classLoader, resolver, registry, sessionAccess, baseImpClass)
+        installSessionActionAndTypingHooks(classLoader, resolver, registry, collectorClass, holderClass, sessionAccess, imeServiceClass)
         installTaiyiAndJankHooks(classLoader, resolver, registry)
         installBugreportAndXCrashHooks(classLoader, resolver, registry)
     }
@@ -911,19 +1046,21 @@ object XiaoAiHookPack : ImeHookPack {
         classLoader: ClassLoader,
         resolver: SymbolResolver,
         registry: HookRegistry,
-        sessionAccess: SessionAccessHelper
+        sessionAccess: SessionAccessHelper,
+        sdkClass: Class<*>?
     ) {
         val ruleId = HookRuleCatalog.RULE_XIAOAI_TELEMETRY_ONETRACK
-        val sdkClass = resolver.resolveClass(
-            cacheKey = "xiaoai.onetrack_sdk",
-            fastPathCandidates = listOf(XiaoAiAnchors.CLASS_ONETRACK_SDK)
-        ).value
 
         val setNetMethod = resolveMethodOnClass(
             resolver, classLoader, "xiaoai.onetrack_set_net", sdkClass,
             XiaoAiAnchors.METHOD_ONETRACK_SET_NET,
             arrayOf(Context::class.java, Boolean::class.javaPrimitiveType!!),
-            dexKitMatcher = null,
+            dexKitMatcher = { cls ->
+                MethodMatcher.create()
+                    .declaredClass(cls.name)
+                    .name(XiaoAiAnchors.METHOD_ONETRACK_SET_NET)
+                    .paramTypes(Context::class.java, Boolean::class.javaPrimitiveType!!)
+            },
             structuralFallback = null
         )
         registry.hookExecutable(ruleId, "onetrack_set_net", setNetMethod) { chain ->
@@ -937,19 +1074,35 @@ object XiaoAiHookPack : ImeHookPack {
             chain.proceed()
         }
 
-        val trackMethodNames = if (sdkClass != null) {
-            val present = safeDeclaredMethods(sdkClass).mapTo(HashSet()) { it.name }
-            val matched = XiaoAiAnchors.ONETRACK_SDK_TRACK_METHODS.filter { it in present }
-            if (matched.isEmpty()) listOf("track") else matched
-        } else {
-            listOf("track")
-        }
+        val trackSpecs = listOf(
+            Triple("onetrack_sdk_track#0", "track", arrayOf("java.lang.String", "java.util.Map")),
+            Triple("onetrack_sdk_track#1", "track", arrayOf("java.lang.String", "java.util.List", "java.util.Map")),
+            Triple("onetrack_sdk_trackByFileOnlySystemApp#0", "trackByFileOnlySystemApp", arrayOf("java.lang.String", "java.util.Map")),
+            Triple("onetrack_sdk_trackEventFromH5#0", "trackEventFromH5", arrayOf("java.lang.String")),
+            Triple(
+                "onetrack_sdk_trackException#0",
+                "trackException",
+                arrayOf("java.lang.String", "java.lang.String", "java.lang.String", "java.lang.String", "java.lang.String", "long")
+            ),
+            Triple("onetrack_sdk_trackPluginEvent#0", "trackPluginEvent", arrayOf("java.lang.String", "java.lang.String", "java.util.Map")),
+            Triple("onetrack_sdk_trackServiceQualityEvent#0", "trackServiceQualityEvent", arrayOf("com.xiaomi.onetrack.ServiceQualityEvent")),
+            Triple("onetrack_sdk_adTrack#0", "adTrack", arrayOf("java.lang.String", "java.util.Map")),
+            Triple("onetrack_sdk_adTrack#1", "adTrack", arrayOf("java.lang.String", "java.util.Map", "java.util.List"))
+        )
 
-        for (methodName in trackMethodNames) {
-            registry.hookAllMethods(ruleId, "onetrack_sdk_$methodName", sdkClass, methodName) { chain ->
+        for ((hookId, methodName, paramTypeNames) in trackSpecs) {
+            val mRes = resolveMethodByTypeNames(
+                resolver = resolver,
+                classLoader = classLoader,
+                cacheKey = "xiaoai.$hookId",
+                targetClass = sdkClass,
+                methodName = methodName,
+                paramTypeNames = paramTypeNames
+            )
+            registry.hookExecutable(ruleId, hookId, mRes) { chain ->
                 if (shouldBlockOneTrackNow(sessionAccess)) {
                     registry.incrementBlocked(ruleId)
-                    return@hookAllMethods null
+                    return@hookExecutable null
                 }
                 chain.proceed()
             }
@@ -960,7 +1113,8 @@ object XiaoAiHookPack : ImeHookPack {
         classLoader: ClassLoader,
         resolver: SymbolResolver,
         registry: HookRegistry,
-        sessionAccess: SessionAccessHelper
+        sessionAccess: SessionAccessHelper,
+        sdkClass: Class<*>?
     ) {
         val ruleId = HookRuleCatalog.RULE_XIAOAI_TELEMETRY_ONETRACK
         val helperClass = resolver.resolveClass(
@@ -968,7 +1122,6 @@ object XiaoAiHookPack : ImeHookPack {
             fastPathCandidates = listOf(XiaoAiAnchors.CLASS_ONETRACK_HELPER),
             dexKitFinder = { bridge -> findClassDescriptorByStrings(bridge, XiaoAiAnchors.ONETRACK_HELPER_STRINGS) }
         ).value
-        val sdkClass = SymbolResolver.loadClassOrNull(XiaoAiAnchors.CLASS_ONETRACK_SDK, classLoader)
 
         val flushEarlyMethod = resolveMethodOnClass(
             resolver, classLoader, "xiaoai.onetrack_helper_flush", helperClass, "b",
@@ -1017,13 +1170,13 @@ object XiaoAiHookPack : ImeHookPack {
             },
             dexKitFinder = { bridge ->
                 val cls = helperClass ?: return@resolveMethod null
-                val errName = trackErrorMethod.value?.name
+                val errDesc = trackErrorMethod.descriptor
                 bridge.findMethod(
                     FindMethod.create().matcher(
                         MethodMatcher.create().declaredClass(cls.name)
                             .paramTypes(String::class.java, Map::class.java).returnType(Void.TYPE)
                     )
-                ).firstOrNull { it.name != errName }?.descriptor
+                ).singleOrNull { it.descriptor != errDesc }?.descriptor
             },
             structuralFallback = { _ ->
                 helperClass?.let { cls ->
@@ -1055,19 +1208,30 @@ object XiaoAiHookPack : ImeHookPack {
         classLoader: ClassLoader,
         resolver: SymbolResolver,
         registry: HookRegistry,
-        sessionAccess: SessionAccessHelper
+        sessionAccess: SessionAccessHelper,
+        baseImpClass: Class<*>?
     ) {
         val ruleId = HookRuleCatalog.RULE_XIAOAI_TELEMETRY_ONETRACK
 
         // Superclass com.xiaomi.onetrack.api.c (BaseOneTrackImp)
-        val baseImpClass = resolver.resolveClass(
-            cacheKey = "xiaoai.onetrack_base_imp",
-            fastPathCandidates = listOf(XiaoAiAnchors.CLASS_ONETRACK_BASE_IMP),
-            dexKitFinder = { bridge -> findClassDescriptorByStrings(bridge, XiaoAiAnchors.ONETRACK_BASE_IMP_STRINGS) }
-        ).value
         val arInterfaceClass = resolver.resolveClass(
             cacheKey = "xiaoai.onetrack_ar_interface",
-            fastPathCandidates = listOf(XiaoAiAnchors.CLASS_ONETRACK_AR_INTERFACE)
+            fastPathCandidates = listOf(XiaoAiAnchors.CLASS_ONETRACK_AR_INTERFACE),
+            dexKitFinder = { bridge ->
+                bridge.findClass(
+                    FindClass.create()
+                        .searchPackages("com.xiaomi.onetrack.api")
+                        .matcher(
+                            ClassMatcher.create()
+                                .modifiers(Modifier.INTERFACE)
+                                .methods {
+                                    count(4)
+                                    add { paramTypes(Int::class.javaPrimitiveType!!); returnType(Void.TYPE) }
+                                    add { paramTypes(Boolean::class.javaPrimitiveType!!); returnType(Void.TYPE) }
+                                }
+                        )
+                ).singleOrNull()?.descriptor
+            }
         ).value
 
         // c#j(): ar -> return safe no-op ar proxy if au#a short-circuited leaving f4218a == null
@@ -1112,22 +1276,59 @@ object XiaoAiHookPack : ImeHookPack {
                 chain.proceed()
             }
         }
-        if (baseImpClass != null) {
-            val baseTrackMethods = safeDeclaredMethods(baseImpClass).filter { method ->
-                !Modifier.isStatic(method.modifiers) &&
-                    method.returnType == Void.TYPE &&
-                    method.name in setOf("a", "b") &&
-                    method.parameterCount >= 1 &&
-                    method.parameterTypes[0] != Context::class.java
-            }
-            for ((idx, method) in baseTrackMethods.withIndex()) {
-                registry.hookMethod(ruleId, "onetrack_base_track_$idx", method) { chain ->
-                    if (shouldBlockOneTrackNow(sessionAccess)) {
-                        registry.incrementBlocked(ruleId)
-                        return@hookMethod null
-                    }
-                    chain.proceed()
+        val baseTrackSpecs: List<Triple<String, String, Array<String>>> = listOf(
+            Triple("0", "a", arrayOf("java.util.HashMap")),
+            Triple("1", "a", arrayOf("java.lang.String", "java.lang.String", "java.util.Map")),
+            Triple("2", "a", arrayOf("java.lang.String", "java.lang.String", "boolean")),
+            Triple("3", "b", arrayOf("java.util.Map")),
+            Triple("4", "b", arrayOf("java.lang.String")),
+            Triple("5", "b", arrayOf("boolean")),
+            Triple("6", "a", arrayOf("java.lang.String", "java.util.Map", "boolean")),
+            Triple("7", "a", arrayOf("java.lang.String", "java.util.Map", "java.util.List")),
+            Triple("8", "a", arrayOf("java.lang.String")),
+            Triple(
+                "9",
+                "a",
+                arrayOf(
+                    "java.lang.String",
+                    "java.lang.String",
+                    "java.lang.String",
+                    "java.lang.String",
+                    "java.lang.String",
+                    "java.lang.String",
+                    "long",
+                    "java.util.Map",
+                    "boolean"
+                )
+            ),
+            Triple("10", "a", arrayOf("java.util.Map")),
+            Triple("11", "a", arrayOf("java.lang.String", "java.lang.Object")),
+            Triple("12", "a", arrayOf("java.lang.String", "com.xiaomi.onetrack.OneTrack\$UserIdType", "java.util.Map", "boolean")),
+            Triple("13", "a", arrayOf("java.lang.String", "java.lang.Number")),
+            Triple("14", "a", arrayOf("java.util.Map", "boolean")),
+            Triple("15", "a", arrayOf("java.lang.String", "boolean")),
+            Triple("16", "a", arrayOf("java.lang.String", "long")),
+            Triple("17", "a", arrayOf("boolean")),
+            Triple("18", "a", arrayOf("com.xiaomi.onetrack.OneTrack\$ICommonPropertyProvider")),
+            Triple("19", "a", arrayOf("com.xiaomi.onetrack.ServiceQualityEvent")),
+            Triple("20", "a", arrayOf("com.xiaomi.onetrack.OneTrack\$IEventHook"))
+        )
+        for ((idx, methodName, paramTypeNames) in baseTrackSpecs) {
+            val mRes = resolveMethodByTypeNames(
+                resolver = resolver,
+                classLoader = classLoader,
+                cacheKey = "xiaoai.onetrack_base_track_$idx",
+                targetClass = baseImpClass,
+                methodName = methodName,
+                paramTypeNames = paramTypeNames,
+                returnTypeName = "void"
+            )
+            registry.hookExecutable(ruleId, "onetrack_base_track_$idx", mRes) { chain ->
+                if (shouldBlockOneTrackNow(sessionAccess)) {
+                    registry.incrementBlocked(ruleId)
+                    return@hookExecutable null
                 }
+                chain.proceed()
             }
         }
 
@@ -1135,7 +1336,18 @@ object XiaoAiHookPack : ImeHookPack {
         val impClass = resolver.resolveClass(
             cacheKey = "xiaoai.onetrack_imp",
             fastPathCandidates = listOf(XiaoAiAnchors.CLASS_ONETRACK_IMP),
-            dexKitFinder = { bridge -> findClassDescriptorByStrings(bridge, XiaoAiAnchors.ONETRACK_IMP_STRINGS) }
+            dexKitFinder = { bridge ->
+                bridge.findClass(
+                    FindClass.create().matcher(
+                        ClassMatcher.create()
+                            .usingStrings(
+                                listOf("OneTrackImp", "master sdk only smarthome call this method! "),
+                                StringMatchType.Equals
+                            )
+                            .apply { baseImpClass?.let { superClass(it.name) } }
+                    )
+                ).singleOrNull()?.descriptor
+            }
         ).value
         val impInitMethod = resolveMethodOnClass(
             resolver, classLoader, "xiaoai.onetrack_imp_init", impClass, "a",
@@ -1188,27 +1400,25 @@ object XiaoAiHookPack : ImeHookPack {
         )
         val ipcSevenAMethod = resolveMethodOnClass(
             resolver, classLoader, "xiaoai.onetrack_ipc_7a", serviceConnClass, "a", sevenStrings,
-            dexKitMatcher = { cls -> MethodMatcher.create().declaredClass(cls.name).paramTypes(*sevenStrings) },
+            dexKitMatcher = { cls ->
+                MethodMatcher.create()
+                    .declaredClass(cls.name)
+                    .usingStrings(listOf("track ps throwable: "))
+                    .paramTypes(*sevenStrings)
+            },
             structuralFallback = { cls ->
                 safeDeclaredMethods(cls).firstOrNull { !Modifier.isStatic(it.modifiers) && it.parameterTypes.contentEquals(sevenStrings) }
             }
         )
-        val ipcSevenBMethod = resolver.resolveMethod(
-            cacheKey = "xiaoai.onetrack_ipc_7b",
-            fastPath = { cl ->
-                val cls = serviceConnClass ?: return@resolveMethod null
-                val resolvedCls = if (cls.classLoader === cl) cls else SymbolResolver.loadClassOrNull(cls.name, cl) ?: return@resolveMethod null
-                SymbolResolver.findDeclaredMethodOrNull(resolvedCls, "b", *sevenStrings)
+        val ipcSevenBMethod = resolveMethodOnClass(
+            resolver, classLoader, "xiaoai.onetrack_ipc_7b", serviceConnClass, "b", sevenStrings,
+            dexKitMatcher = { cls ->
+                MethodMatcher.create()
+                    .declaredClass(cls.name)
+                    .usingStrings(listOf("projectId", "topic"))
+                    .paramTypes(*sevenStrings)
             },
-            dexKitFinder = { bridge ->
-                val cls = serviceConnClass ?: return@resolveMethod null
-                val sevenAName = ipcSevenAMethod.value?.name
-                bridge.findMethod(
-                    FindMethod.create().matcher(MethodMatcher.create().declaredClass(cls.name).paramTypes(*sevenStrings))
-                ).firstOrNull { it.name != sevenAName }?.descriptor
-            },
-            structuralFallback = { _ ->
-                val cls = serviceConnClass ?: return@resolveMethod null
+            structuralFallback = { cls ->
                 val sevenAName = ipcSevenAMethod.value?.name
                 safeDeclaredMethods(cls).firstOrNull {
                     !Modifier.isStatic(it.modifiers) && it.parameterTypes.contentEquals(sevenStrings) && it.name != sevenAName
@@ -1253,8 +1463,9 @@ object XiaoAiHookPack : ImeHookPack {
             resolver, classLoader, "xiaoai.onetrack_traceid_call", traceIdClass, "call", emptyArray(),
             dexKitMatcher = { cls ->
                 MethodMatcher.create().declaredClass(cls.name)
-                    .usingStrings(listOf("content://com.miui.analytics.OneTrackProvider/traceId"))
-                    .paramCount(0).returnType(String::class.java)
+                    .name("call")
+                    .paramCount(0)
+                    .returnType(Any::class.java)
             },
             structuralFallback = { cls -> SymbolResolver.findDeclaredMethodOrNull(cls, "call") }
         )
@@ -1316,7 +1527,17 @@ object XiaoAiHookPack : ImeHookPack {
         )
         val trackAMethod = resolveMethodOnClass(
             resolver, classLoader, "$cachePrefix.track_a", impClass, "a", arrayOf(String::class.java, String::class.java),
-            dexKitMatcher = { cls -> MethodMatcher.create().declaredClass(cls.name).paramTypes(String::class.java, String::class.java).returnType(Void.TYPE) },
+            dexKitMatcher = { cls ->
+                val matcher = MethodMatcher.create()
+                    .declaredClass(cls.name)
+                    .paramTypes(String::class.java, String::class.java)
+                    .returnType(Void.TYPE)
+                if (cachePrefix == "xiaoai.onetrack_sys_imp") {
+                    matcher.usingNumbers(0)
+                } else {
+                    matcher.usingStrings(listOf("The privacy policy is not permitted"))
+                }
+            },
             structuralFallback = { cls ->
                 safeDeclaredMethods(cls).firstOrNull {
                     !Modifier.isStatic(it.modifiers) && Modifier.isPublic(it.modifiers) && it.returnType == Void.TYPE &&
@@ -1333,12 +1554,12 @@ object XiaoAiHookPack : ImeHookPack {
             },
             dexKitFinder = { bridge ->
                 val cls = impClass ?: return@resolveMethod null
-                val trackAName = trackAMethod.value?.name
+                val trackADesc = trackAMethod.descriptor
                 bridge.findMethod(
                     FindMethod.create().matcher(
                         MethodMatcher.create().declaredClass(cls.name).paramTypes(String::class.java, String::class.java).returnType(Void.TYPE)
                     )
-                ).firstOrNull { it.name != trackAName }?.descriptor
+                ).singleOrNull { it.descriptor != trackADesc }?.descriptor
             },
             structuralFallback = { _ ->
                 val cls = impClass ?: return@resolveMethod null
@@ -1383,7 +1604,8 @@ object XiaoAiHookPack : ImeHookPack {
         registry: HookRegistry,
         collectorClass: Class<*>?,
         holderClass: Class<*>?,
-        sessionAccess: SessionAccessHelper
+        sessionAccess: SessionAccessHelper,
+        imeServiceClass: Class<*>?
     ) {
         val ruleId = HookRuleCatalog.RULE_XIAOAI_TELEMETRY_PASSWORD_AND_SESSION
 
@@ -1444,7 +1666,21 @@ object XiaoAiHookPack : ImeHookPack {
         val cacheClass = resolver.resolveClass(
             cacheKey = "xiaoai.session_cache",
             fastPathCandidates = listOf(XiaoAiAnchors.CLASS_SESSION_CACHE),
-            dexKitFinder = { bridge -> findClassDescriptorByStrings(bridge, XiaoAiAnchors.SESSION_CACHE_STRINGS) }
+            dexKitFinder = { bridge ->
+                bridge.findClass(
+                    FindClass.create().matcher(
+                        ClassMatcher.create()
+                            .usingStrings(
+                                XiaoAiAnchors.SESSION_CACHE_STRINGS + "reportEvent",
+                                StringMatchType.Equals
+                            )
+                            .interfaces { count(0) }
+                            .methods {
+                                add { paramTypes(String::class.java, Map::class.java).returnType(Void.TYPE) }
+                            }
+                    )
+                ).singleOrNull()?.descriptor
+            }
         ).value
         val cacheReportMethod = resolveMethodOnClass(
             resolver, classLoader, "xiaoai.session_cache_report", cacheClass, "b",
@@ -1511,24 +1747,22 @@ object XiaoAiHookPack : ImeHookPack {
             }
         }
 
-        // MiInputMethodService#onReportTypingTimeOfIme(Bundle)
-        val imeServiceClass = resolver.resolveClass(
-            cacheKey = "xiaoai.ime_service_cls",
-            fastPathCandidates = listOf(XiaoAiAnchors.CLASS_MI_IME_SERVICE)
-        ).value
-        val typingReportMethod = resolveMethodOnClass(
-            resolver, classLoader, "xiaoai.ime_report_typing_time", imeServiceClass,
-            XiaoAiAnchors.METHOD_IME_REPORT_TYPING_TIME, arrayOf(Bundle::class.java),
-            dexKitMatcher = { cls ->
-                MethodMatcher.create().declaredClass(cls.name).name(XiaoAiAnchors.METHOD_IME_REPORT_TYPING_TIME)
-                    .paramTypes(Bundle::class.java)
-            },
-            structuralFallback = { cls ->
-                SymbolResolver.findDeclaredMethodOrNull(cls, XiaoAiAnchors.METHOD_IME_REPORT_TYPING_TIME, Bundle::class.java)
-            }
-        )
-        if (typingReportMethod.isSuccess) {
-            registry.hookExecutable(ruleId, "ime_report_typing_time", typingReportMethod, onFailureStatus = HookMatchStatus.DEGRADED) { chain ->
+        // Optional MIUI/HyperOS framework method on android.inputmethodservice.InputMethodService (absent in APK DEX & AOSP)
+        val typingReportMethod = imeServiceClass?.let { cls ->
+            runCatching { cls.getMethod(XiaoAiAnchors.METHOD_IME_REPORT_TYPING_TIME, Bundle::class.java) }.getOrNull()
+        }
+        if (typingReportMethod != null) {
+            registry.hookExecutable(
+                ruleId = ruleId,
+                hookId = "ime_report_typing_time",
+                resolveResult = ResolveResult(
+                    value = typingReportMethod,
+                    source = ResolveSource.FAST_PATH,
+                    descriptor = SymbolResolver.executableToDescriptor(typingReportMethod),
+                    detail = SymbolResolver.formatExecutable(typingReportMethod)
+                ),
+                onFailureStatus = HookMatchStatus.DEGRADED
+            ) { chain ->
                 if (ConfigBridge.isPointEnabled(targetPkg, HookRuleCatalog.RULE_XIAOAI_TELEMETRY_PASSWORD_AND_SESSION)) {
                     registry.incrementBlocked(ruleId)
                     return@hookExecutable null
@@ -1707,9 +1941,10 @@ object XiaoAiHookPack : ImeHookPack {
     private fun installCloudAndIpcHooks(
         classLoader: ClassLoader,
         resolver: SymbolResolver,
-        registry: HookRegistry
+        registry: HookRegistry,
+        imeServiceClass: Class<*>?
     ) {
-        installVoiceAssistLaunchHooks(classLoader, resolver, registry)
+        installVoiceAssistLaunchHooks(classLoader, resolver, registry, imeServiceClass)
         installMiclawLlmHooks(classLoader, resolver, registry)
         installScreenCaptureHooks(classLoader, resolver, registry)
         installTranslateAndTaiyiHooks(classLoader, resolver, registry)
@@ -1720,7 +1955,8 @@ object XiaoAiHookPack : ImeHookPack {
     private fun installVoiceAssistLaunchHooks(
         classLoader: ClassLoader,
         resolver: SymbolResolver,
-        registry: HookRegistry
+        registry: HookRegistry,
+        imeServiceClass: Class<*>?
     ) {
         val ruleId = HookRuleCatalog.RULE_XIAOAI_CLOUD_VOICEASSIST_LAUNCH
 
@@ -1799,13 +2035,15 @@ object XiaoAiHookPack : ImeHookPack {
             fastPathCandidates = listOf(XiaoAiAnchors.CLASS_VOICEASSIST_QUERY_HELPER),
             dexKitFinder = { bridge -> findClassDescriptorByStrings(bridge, XiaoAiAnchors.VOICEASSIST_QUERY_STRINGS) }
         ).value
-        val imeServiceClass = resolver.resolveClass(
-            cacheKey = "xiaoai.ime_service_cls",
-            fastPathCandidates = listOf(XiaoAiAnchors.CLASS_MI_IME_SERVICE)
-        ).value
         val stateClass = resolver.resolveClass(
             cacheKey = "xiaoai.voiceassist_state_cls",
-            fastPathCandidates = listOf(XiaoAiAnchors.CLASS_VOICEASSIST_STATE)
+            fastPathCandidates = listOf(XiaoAiAnchors.CLASS_VOICEASSIST_STATE),
+            dexKitFinder = { bridge ->
+                findClassDescriptorByStrings(
+                    bridge,
+                    listOf("sourceText", "IntentDisplay(label=", ", confidence=", ", sourceText=")
+                )
+            }
         ).value
         val queryLaunchMethod = resolveMethodOnClass(
             resolver, classLoader, "xiaoai.voiceassist_query_launch", queryHelperClass, "W",
@@ -1869,10 +2107,35 @@ object XiaoAiHookPack : ImeHookPack {
             dexKitFinder = { bridge -> findClassDescriptorByStrings(bridge, XiaoAiAnchors.MICLAW_FAILED_STRINGS) }
         ).value
 
+        val miclawSessionClass = submitTextMethod.value?.returnType
+            ?: resolver.resolveClass(
+                cacheKey = "xiaoai.miclaw_session",
+                fastPathCandidates = listOf(XiaoAiAnchors.CLASS_MICLAW_SESSION),
+                dexKitFinder = { bridge ->
+                    val mgrCls = miclawClass ?: return@resolveClass null
+                    bridge.findClass(
+                        FindClass.create().matcher(
+                            ClassMatcher.create().methods {
+                                add {
+                                    name("<init>")
+                                    paramTypes(
+                                        mgrCls.name,
+                                        "long",
+                                        "long",
+                                        "java.lang.String",
+                                        "java.util.List",
+                                        "java.lang.String",
+                                        "java.lang.String"
+                                    )
+                                }
+                            }
+                        )
+                    ).singleOrNull()?.descriptor
+                }
+            ).value
         val miclawHelper = MiclawFailureHelper(
             managerClass = miclawClass,
-            sessionClass = submitTextMethod.value?.returnType
-                ?: SymbolResolver.loadClassOrNull(XiaoAiAnchors.CLASS_MICLAW_SESSION, classLoader),
+            sessionClass = miclawSessionClass,
             failedClass = miclawFailedClass
         )
 
@@ -1937,6 +2200,16 @@ object XiaoAiHookPack : ImeHookPack {
             }
 
             chain.proceed()
+        }
+
+        registry.getReport(ruleId)?.let { miclawReport ->
+            registry.reportRule(
+                ruleId = HookRuleCatalog.RULE_XIAOAI_CONTEXT_CURSOR_PROMPT_STRIP,
+                status = miclawReport.status,
+                matchedMethod = miclawReport.matchedMethod,
+                source = miclawReport.source,
+                detail = miclawReport.detail
+            )
         }
     }
 
@@ -2027,7 +2300,7 @@ object XiaoAiHookPack : ImeHookPack {
                 if (translateStateInterface != null && translateStateInterface.isInterface) {
                     matcher.addInterface(translateStateInterface.name)
                 }
-                bridge.findClass(FindClass.create().matcher(matcher)).firstOrNull()?.descriptor
+                bridge.findClass(FindClass.create().matcher(matcher)).singleOrNull()?.descriptor
             }
         ).value
         val translateErrorClass = resolver.resolveClass(
@@ -2081,12 +2354,42 @@ object XiaoAiHookPack : ImeHookPack {
             fastPathCandidates = listOf(XiaoAiAnchors.CLASS_TAIYI_MANAGER),
             dexKitFinder = { bridge -> findClassDescriptorByStrings(bridge, XiaoAiAnchors.TAIYI_MANAGER_STRINGS) }
         ).value
-        val aiRequestClass = SymbolResolver.loadClassOrNull(XiaoAiAnchors.CLASS_TAIYI_REQUEST, classLoader)
+        val aiRequestClass = resolver.resolveClass(
+            cacheKey = "xiaoai.taiyi_request_cls",
+            fastPathCandidates = listOf(XiaoAiAnchors.CLASS_TAIYI_REQUEST),
+            dexKitFinder = { bridge ->
+                bridge.findClass(
+                    FindClass.create().matcher(
+                        ClassMatcher.create()
+                            .usingStrings(listOf("AIRequest{\nid = ", ", \nheaders = ", ", \nbody = "), StringMatchType.Equals)
+                            .methods { add { name("getApi") } }
+                    )
+                ).singleOrNull()?.descriptor
+            }
+        ).value
+        val aiResponseClass = resolver.resolveClass(
+            cacheKey = "xiaoai.taiyi_response_cls",
+            fastPathCandidates = listOf(XiaoAiAnchors.CLASS_TAIYI_RESPONSE),
+            dexKitFinder = { bridge ->
+                bridge.findClass(
+                    FindClass.create().matcher(
+                        ClassMatcher.create()
+                            .usingStrings(listOf("AIResponse{\nid = ", ", \nheaders = "))
+                            .methods { add { name("isSuccessful") } }
+                    )
+                ).singleOrNull()?.descriptor
+            }
+        ).value
         val taiyiExecMethod = resolveMethodOnClass(
             resolver, classLoader, "xiaoai.taiyi_exec", taiyiManagerClass, "e",
             if (aiRequestClass != null) arrayOf(aiRequestClass) else emptyArray(),
-            dexKitMatcher = if (aiRequestClass != null) {
-                { cls -> MethodMatcher.create().declaredClass(cls.name).paramTypes(aiRequestClass) }
+            dexKitMatcher = if (aiRequestClass != null && aiResponseClass != null) {
+                { cls ->
+                    MethodMatcher.create()
+                        .declaredClass(cls.name)
+                        .paramTypes(aiRequestClass)
+                        .returnType(aiResponseClass)
+                }
             } else null,
             structuralFallback = { cls ->
                 safeDeclaredMethods(cls).firstOrNull {
@@ -2096,7 +2399,7 @@ object XiaoAiHookPack : ImeHookPack {
                 }
             }
         )
-        val aiResponseHelper = TaiyiErrorResponseHelper(classLoader)
+        val aiResponseHelper = TaiyiErrorResponseHelper(aiRequestClass, aiResponseClass)
         registry.hookExecutable(ruleId, "taiyi_aiservice_exec", taiyiExecMethod) { chain ->
             val request = chain.getArg(0)
             val localAffinity = isTaiyiLocalAffinity(request)
@@ -2229,7 +2532,15 @@ object XiaoAiHookPack : ImeHookPack {
         val hotwordClosureClass = resolver.resolveClass(
             cacheKey = "xiaoai.hotword_closure_cls",
             fastPathCandidates = listOf(XiaoAiAnchors.CLASS_HOTWORD_CLOSURE),
-            dexKitFinder = { bridge -> findClassDescriptorByStrings(bridge, XiaoAiAnchors.HOTWORD_CLOSURE_STRINGS) }
+            dexKitFinder = { bridge ->
+                bridge.findClass(
+                    FindClass.create().matcher(
+                        ClassMatcher.create()
+                            .usingStrings(XiaoAiAnchors.HOTWORD_CLOSURE_STRINGS, StringMatchType.Equals)
+                            .methods { add { name("h"); paramTypes(Any::class.java) } }
+                    )
+                ).singleOrNull()?.descriptor
+            }
         ).value
         val hotwordClosureMethod = resolveMethodOnClass(
             resolver, classLoader, "xiaoai.hotword_closure_h", hotwordClosureClass, "h", arrayOf(Any::class.java),
@@ -2300,12 +2611,36 @@ object XiaoAiHookPack : ImeHookPack {
         ).value
         val workSuccessCtor = runCatching { workSuccessClass?.getDeclaredConstructor()?.apply { isAccessible = true } }.getOrNull()
 
-        for ((hookId, workerClassName) in listOf(
-            "dictpack_catalog_worker" to XiaoAiAnchors.CLASS_DICTPACK_CATALOG_WORKER,
-            "dictpack_download_worker" to XiaoAiAnchors.CLASS_DICTPACK_DOWNLOAD_WORKER,
-            "hotdict_sync_worker" to XiaoAiAnchors.CLASS_HOTDICT_SYNC_WORKER
+        for ((hookId, workerClassName, workerStrings) in listOf(
+            Triple(
+                "dictpack_catalog_worker",
+                XiaoAiAnchors.CLASS_DICTPACK_CATALOG_WORKER,
+                listOf("DictPackCatalogWorker", "catalog.worker", "dict_pack_catalog_periodic")
+            ),
+            Triple(
+                "dictpack_download_worker",
+                XiaoAiAnchors.CLASS_DICTPACK_DOWNLOAD_WORKER,
+                listOf("DictPackDownloadWorker", "download database unavailable; retry later")
+            ),
+            Triple(
+                "hotdict_sync_worker",
+                XiaoAiAnchors.CLASS_HOTDICT_SYNC_WORKER,
+                listOf("HotDictSyncWorker")
+            )
         )) {
-            val workerCls = resolver.resolveClass("xiaoai.$hookId", listOf(workerClassName)).value
+            val workerCls = resolver.resolveClass(
+                cacheKey = "xiaoai.$hookId",
+                fastPathCandidates = listOf(workerClassName),
+                dexKitFinder = { bridge ->
+                    bridge.findClass(
+                        FindClass.create().matcher(
+                            ClassMatcher.create()
+                                .superClass("androidx.work.CoroutineWorker")
+                                .usingStrings(workerStrings)
+                        )
+                    ).singleOrNull()?.descriptor
+                }
+            ).value
             val doWorkMethod = resolveMethodOnClass(
                 resolver, classLoader, "xiaoai.${hookId}_b", workerCls, "b", emptyArray(),
                 dexKitMatcher = { cls -> MethodMatcher.create().declaredClass(cls.name).name("b").paramCount(1) },
@@ -2382,15 +2717,12 @@ object XiaoAiHookPack : ImeHookPack {
     private fun installTopActivityAndPkgHooks(
         classLoader: ClassLoader,
         resolver: SymbolResolver,
-        registry: HookRegistry
+        registry: HookRegistry,
+        imeServiceClass: Class<*>?
     ) {
         val ruleId = HookRuleCatalog.RULE_XIAOAI_CONTEXT_TOP_ACTIVITY_AND_PKG
 
         // 1. MiInputMethodService#resolveTopActivityName(String)
-        val imeServiceClass = resolver.resolveClass(
-            cacheKey = "xiaoai.ime_service_cls",
-            fastPathCandidates = listOf(XiaoAiAnchors.CLASS_MI_IME_SERVICE)
-        ).value
         val resolveTopActivityMethod = resolveMethodOnClass(
             resolver, classLoader, "xiaoai.ime_resolve_top_activity", imeServiceClass,
             XiaoAiAnchors.METHOD_IME_RESOLVE_TOP_ACTIVITY, arrayOf(String::class.java),
@@ -2416,12 +2748,17 @@ object XiaoAiHookPack : ImeHookPack {
             fastPathCandidates = listOf(XiaoAiAnchors.CLASS_APP_LABEL_HELPER),
             dexKitFinder = { bridge ->
                 imeServiceClass?.let { imeCls ->
-                    bridge.findMethod(
-                        FindMethod.create().matcher(
-                            MethodMatcher.create().paramTypes(imeCls).returnType(String::class.java)
-                                .usingStrings(XiaoAiAnchors.APP_LABEL_HELPER_STRINGS)
+                    bridge.findClass(
+                        FindClass.create().matcher(
+                            ClassMatcher.create().methods {
+                                add {
+                                    paramTypes(imeCls)
+                                    returnType(String::class.java)
+                                    usingStrings(XiaoAiAnchors.APP_LABEL_HELPER_STRINGS)
+                                }
+                            }
                         )
-                    ).firstOrNull()?.declaredClassName
+                    ).singleOrNull()?.descriptor
                 }
             }
         ).value
@@ -2489,7 +2826,8 @@ object XiaoAiHookPack : ImeHookPack {
     private fun installHotwordAicrHooks(
         classLoader: ClassLoader,
         resolver: SymbolResolver,
-        registry: HookRegistry
+        registry: HookRegistry,
+        unitSingleton: Any?
     ) {
         val ruleId = HookRuleCatalog.RULE_XIAOAI_CONTEXT_HOTWORD_AICR
 
@@ -2521,7 +2859,9 @@ object XiaoAiHookPack : ImeHookPack {
         val hotwordStaticMethod = resolveMethodOnClass(
             resolver, classLoader, "xiaoai.hotword_client_e", hotwordClientClass, "e", emptyArray(),
             dexKitMatcher = { cls ->
-                MethodMatcher.create().declaredClass(cls.name).usingStrings(XiaoAiAnchors.HOTWORD_STATIC_STRINGS).paramCount(4)
+                MethodMatcher.create().declaredClass(cls.name)
+                    .usingStrings(XiaoAiAnchors.HOTWORD_STATIC_STRINGS, StringMatchType.Equals)
+                    .paramCount(4)
             },
             structuralFallback = { cls ->
                 safeDeclaredMethods(cls).firstOrNull {
@@ -2611,7 +2951,6 @@ object XiaoAiHookPack : ImeHookPack {
             },
             structuralFallback = { cls -> SymbolResolver.findDeclaredMethodOrNull(cls, "s", Any::class.java) }
         )
-        val unitSingleton = resolveKotlinUnitInstance(resolver, classLoader)
         registry.hookExecutable(ruleId, "hotword_init_task", hotwordInitTaskMethod) { chain ->
             if (isHotwordLambdaCase(chain.thisObject, 0) &&
                 ConfigBridge.isPointEnabled(targetPkg, HookRuleCatalog.RULE_XIAOAI_CONTEXT_HOTWORD_AICR)
@@ -2658,7 +2997,15 @@ object XiaoAiHookPack : ImeHookPack {
         )
         val trackerSnapshotMethod = resolveMethodOnClass(
             resolver, classLoader, "xiaoai.hotword_tracker_snapshot", editTrackerClass, "h", emptyArray(),
-            dexKitMatcher = { cls -> MethodMatcher.create().declaredClass(cls.name).paramCount(0).returnType(Void.TYPE) },
+            dexKitMatcher = { cls ->
+                MethodMatcher.create().declaredClass(cls.name)
+                    .paramCount(0)
+                    .returnType(Void.TYPE)
+                    .invokeMethods {
+                        add { declaredClass(cls.name); paramCount(0); returnType(Void.TYPE) }
+                        add { declaredClass(cls.name); paramTypes(Boolean::class.javaPrimitiveType!!); returnType(Void.TYPE) }
+                    }
+            },
             structuralFallback = { cls ->
                 safeDeclaredMethods(cls).firstOrNull {
                     !Modifier.isStatic(it.modifiers) && it.name == "h" && it.parameterCount == 0 && it.returnType == Void.TYPE
@@ -2690,7 +3037,10 @@ object XiaoAiHookPack : ImeHookPack {
         val y5MethodA = resolveMethodOnClass(
             resolver, classLoader, "xiaoai.voice_hotword_a", voiceHotwordCacheClass, "a", emptyArray(),
             dexKitMatcher = { cls ->
-                MethodMatcher.create().declaredClass(cls.name).paramCount(3).returnType(Any::class.java)
+                MethodMatcher.create().declaredClass(cls.name)
+                    .modifiers(Modifier.STATIC)
+                    .paramCount(3)
+                    .returnType(Any::class.java)
             },
             structuralFallback = { cls ->
                 safeDeclaredMethods(cls).firstOrNull {
@@ -2772,7 +3122,8 @@ object XiaoAiHookPack : ImeHookPack {
     private fun installSystemCloudControlHooks(
         classLoader: ClassLoader,
         resolver: SymbolResolver,
-        registry: HookRegistry
+        registry: HookRegistry,
+        unitSingleton: Any?
     ) {
         val ruleId = HookRuleCatalog.RULE_XIAOAI_NET_SYSTEM_CLOUD_CONTROL
 
@@ -2815,7 +3166,6 @@ object XiaoAiHookPack : ImeHookPack {
             },
             structuralFallback = { cls -> SymbolResolver.findDeclaredMethodOrNull(cls, "s", Any::class.java) }
         )
-        val unitSingleton = resolveKotlinUnitInstance(resolver, classLoader)
         registry.hookExecutable(ruleId, "cloud_control_flow", cloudFlowMethod) { chain ->
             if (ConfigBridge.isPointEnabled(targetPkg, HookRuleCatalog.RULE_XIAOAI_NET_SYSTEM_CLOUD_CONTROL)) {
                 registry.incrementBlocked(ruleId)
@@ -2839,7 +3189,13 @@ object XiaoAiHookPack : ImeHookPack {
         // 4. ScenarioRecognition & ub.a#onTransact
         val scenarioClass = resolver.resolveClass(
             cacheKey = "xiaoai.scenario_recognition",
-            fastPathCandidates = listOf(XiaoAiAnchors.CLASS_SCENARIO_RECOGNITION)
+            fastPathCandidates = listOf(XiaoAiAnchors.CLASS_SCENARIO_RECOGNITION),
+            dexKitFinder = { bridge ->
+                findClassDescriptorByStrings(
+                    bridge,
+                    listOf("miui.scenariorecognition.ScenarioRecognitionManager", "CoreScenarioRecognition init time: ")
+                )
+            }
         ).value
         val scenarioGetInstance = resolveMethodOnClass(
             resolver, classLoader, "xiaoai.scenario_get_instance", scenarioClass, "getInstance", emptyArray(),
@@ -2894,10 +3250,77 @@ object XiaoAiHookPack : ImeHookPack {
         }
     }
 
-    private fun findClassDescriptorByStrings(bridge: DexKitBridge, strings: List<String>): String? =
+    private fun resolveImeServiceClass(resolver: SymbolResolver): Class<*>? =
+        resolver.resolveClass(
+            cacheKey = "xiaoai.ime_service_cls",
+            fastPathCandidates = listOf(XiaoAiAnchors.CLASS_MI_IME_SERVICE),
+            dexKitFinder = { bridge ->
+                bridge.findClass(
+                    FindClass.create().matcher(
+                        ClassMatcher.create()
+                            .superClass("android.inputmethodservice.InputMethodService")
+                            .usingStrings(listOf("MiInputMethodService", "onReportTypingTimeOfIme", "isInternalTestMode"))
+                    )
+                ).singleOrNull()?.descriptor
+            }
+        ).value
+
+    private fun resolveOneTrackBaseImpClass(resolver: SymbolResolver): Class<*>? =
+        resolver.resolveClass(
+            cacheKey = "xiaoai.onetrack_base_imp",
+            fastPathCandidates = listOf(XiaoAiAnchors.CLASS_ONETRACK_BASE_IMP),
+            dexKitFinder = { bridge -> findClassDescriptorByStrings(bridge, XiaoAiAnchors.ONETRACK_BASE_IMP_STRINGS) }
+        ).value
+
+    private fun findClassDescriptorByStrings(bridge: DexKitExecutor, strings: List<String>): String? =
         bridge.findClass(
             FindClass.create().matcher(ClassMatcher.create().usingStrings(strings))
-        ).firstOrNull()?.descriptor
+        ).singleOrNull()?.descriptor
+
+    private fun resolveMethodByTypeNames(
+        resolver: SymbolResolver,
+        classLoader: ClassLoader,
+        cacheKey: String,
+        targetClass: Class<*>?,
+        methodName: String,
+        paramTypeNames: Array<String>,
+        returnTypeName: String? = null
+    ): ResolveResult<Method> {
+        return resolver.resolveMethod(
+            cacheKey = cacheKey,
+            fastPath = { cl ->
+                val cls = targetClass ?: return@resolveMethod null
+                val resolvedCls = if (cls.classLoader === cl) cls else SymbolResolver.loadClassOrNull(cls.name, cl)
+                    ?: return@resolveMethod null
+                val paramClasses = paramTypeNames.map { typeName ->
+                    when (typeName) {
+                        "boolean" -> Boolean::class.javaPrimitiveType!!
+                        "byte" -> Byte::class.javaPrimitiveType!!
+                        "short" -> Short::class.javaPrimitiveType!!
+                        "char" -> Char::class.javaPrimitiveType!!
+                        "int" -> Int::class.javaPrimitiveType!!
+                        "long" -> Long::class.javaPrimitiveType!!
+                        "float" -> Float::class.javaPrimitiveType!!
+                        "double" -> Double::class.javaPrimitiveType!!
+                        else -> SymbolResolver.loadClassOrNull(typeName, resolvedCls.classLoader ?: cl)
+                            ?: return@resolveMethod null
+                    }
+                }.toTypedArray()
+                SymbolResolver.findDeclaredMethodOrNull(resolvedCls, methodName, *paramClasses)
+            },
+            dexKitFinder = { bridge ->
+                val cls = targetClass ?: return@resolveMethod null
+                val matcher = MethodMatcher.create()
+                    .declaredClass(cls.name)
+                    .name(methodName)
+                    .paramTypes(*paramTypeNames)
+                if (returnTypeName != null) {
+                    matcher.returnType(returnTypeName)
+                }
+                bridge.findMethod(FindMethod.create().matcher(matcher)).singleOrNull()?.descriptor
+            }
+        )
+    }
 
     private fun resolveMethodOnClass(
         resolver: SymbolResolver,
@@ -2923,7 +3346,7 @@ object XiaoAiHookPack : ImeHookPack {
                 finder@{ bridge ->
                     val cls = targetClass ?: return@finder null
                     bridge.findMethod(FindMethod.create().matcher(matcherFactory(cls)))
-                        .firstOrNull()?.descriptor
+                        .singleOrNull()?.descriptor
                 }
             },
             structuralFallback = structuralFallback?.let { predicate ->
@@ -2945,8 +3368,17 @@ object XiaoAiHookPack : ImeHookPack {
         val unitClass = resolver.resolveClass(
             cacheKey = "xiaoai.kotlin_unit",
             fastPathCandidates = listOf(XiaoAiAnchors.CLASS_KOTLIN_UNIT),
-            dexKitFinder = { bridge -> findClassDescriptorByStrings(bridge, XiaoAiAnchors.KOTLIN_UNIT_STRINGS) }
-        ).value ?: SymbolResolver.loadClassOrNull(XiaoAiAnchors.CLASS_KOTLIN_UNIT, classLoader) ?: return null
+            dexKitFinder = { bridge ->
+                bridge.findClass(
+                    FindClass.create().matcher(
+                        ClassMatcher.create()
+                            .usingStrings(XiaoAiAnchors.KOTLIN_UNIT_STRINGS, StringMatchType.Equals)
+                            .fields { count(1) }
+                            .methods { add { name("toString"); paramCount(0); returnType(String::class.java) } }
+                    )
+                ).singleOrNull()?.descriptor
+            }
+        ).value ?: return null
         return runCatching {
             safeDeclaredFields(unitClass).firstOrNull {
                 Modifier.isStatic(it.modifiers) && it.type == unitClass
@@ -3059,15 +3491,9 @@ object XiaoAiHookPack : ImeHookPack {
 
     private class SessionAccessHelper(
         private val holderField: Field?,
-        holderClass: Class<*>?
+        holderClass: Class<*>?,
+        private val passwordField: Field?
     ) {
-        private val passwordField: Field? = holderClass?.let { cls ->
-            runCatching {
-                cls.getDeclaredField(XiaoAiAnchors.FIELD_SESSION_PASSWORD).takeIf {
-                    it.type == Boolean::class.javaPrimitiveType && !Modifier.isStatic(it.modifiers)
-                }?.apply { isAccessible = true }
-            }.getOrNull()
-        }
 
         private val holderFields: List<Field> = holderClass?.let { safeDeclaredFields(it) } ?: emptyList()
 
@@ -3230,11 +3656,10 @@ object XiaoAiHookPack : ImeHookPack {
         }
     }
 
-    private class TaiyiErrorResponseHelper(classLoader: ClassLoader) {
-        private val responseClass: Class<*>? =
-            SymbolResolver.loadClassOrNull(XiaoAiAnchors.CLASS_TAIYI_RESPONSE, classLoader)
-        private val requestClass: Class<*>? =
-            SymbolResolver.loadClassOrNull(XiaoAiAnchors.CLASS_TAIYI_REQUEST, classLoader)
+    private class TaiyiErrorResponseHelper(
+        private val requestClass: Class<*>?,
+        private val responseClass: Class<*>?
+    ) {
 
         private val createErrorMethod: Method? = run {
             val respCls = responseClass
